@@ -5,6 +5,7 @@ import {
   LayoutDashboard, Receipt, Package, CreditCard, CalendarClock, 
   PieChart, BarChart4, Settings, LogOut 
 } from 'lucide-react';
+import { useAuth } from '../lib/AuthContext';
 
 interface SidebarProps {
   currentView: View;
@@ -12,6 +13,7 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => {
+  const { logout } = useAuth();
   const menuItems = [
     { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
     { id: 'invoices', label: 'Facturación', icon: Receipt },
@@ -87,7 +89,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
       <div className="p-4 mt-auto z-10 relative shrink-0">
         <div className="pt-4 border-t border-white/5">
             <button 
-            onClick={() => onNavigate('login')}
+            onClick={logout}
             className="w-full flex items-center px-3 py-2.5 text-xs font-medium text-red-400/80 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-all duration-200 group"
             >
             <LogOut className="h-4 w-4 mr-3 group-hover:-translate-x-1 transition-transform" />

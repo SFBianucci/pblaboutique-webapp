@@ -242,77 +242,91 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
         setIsParsing(true);
         setFormData(prev => ({ ...prev, fileName: file.name }));
 
-        const data = await parseInvoiceDocument(file);
-        
-        if (data) {
-            // MATCHING SEGURO
-            let matchedInsurance = "";
-            const extractedName = data.insurance?.toUpperCase() || "";
-            const extractedCuit = data.cuit?.replace(/[-\s]/g, '') || "";
+        try {
+            const data = await parseInvoiceDocument(file);
+            
+            if (data) {
+                // MATCHING SEGURO
+                let matchedInsurance = "";
+                const extractedName = data.insurance?.toUpperCase() || "";
+                const extractedCuit = data.cuit?.replace(/[-\s]/g, '') || "";
 
-            if (extractedCuit) {
-                const foundByCuit = INSURANCE_LIST.find(i => 
-                    i.cuit && i.cuit.replace(/[-\s]/g, '') === extractedCuit
-                );
-                if (foundByCuit) matchedInsurance = foundByCuit.value;
-            }
+                if (extractedCuit) {
+                    const foundByCuit = INSURANCE_LIST.find(i => 
+                        i.cuit && i.cuit.replace(/[-\s]/g, '') === extractedCuit
+                    );
+                    if (foundByCuit) matchedInsurance = foundByCuit.value;
+                }
 
-            if (!matchedInsurance && extractedName) {
-                const foundByName = INSURANCE_LIST.find(i => {
-                    if (i.value.length < 3) return false;
-                    return extractedName.includes(i.value) || extractedName.includes(i.label);
+                if (!matchedInsurance && extractedName) {
+                    const foundByName = INSURANCE_LIST.find(i => {
+                        if (i.value.length < 3) return false;
+                        return extractedName.includes(i.value) || extractedName.includes(i.label);
+                    });
+                    if (foundByName) matchedInsurance = foundByName.value;
+                }
+
+                if (!matchedInsurance && data.insurance) {
+                    if (extractedName.includes("SEGUROS")) {
+                        matchedInsurance = "PARTICULAR"; 
+                    } else {
+                        matchedInsurance = "PARTICULAR";
+                    }
+                }
+
+                setFormData(prev => {
+                    // FECHA SEGURA (Evita cambio de zona horaria)
+                    let safeDate = prev.date;
+                    if (data.date) {
+                        // data.date es 'YYYY-MM-DD'. Dividimos y creamos la fecha localmente
+                        const [year, month, day] = data.date.split('-').map(Number);
+                        // Mes en JS es 0-11
+                        safeDate = new Date(year, month - 1, day);
+                    }
+
+                    // TIPO DE COMPROBANTE
+                    // El parser devuelve el tipo exacto (ej: "Nota de Credito A").
+                    // Verificamos si existe en nuestra lista del modal, si no, intentamos un fallback inteligente.
+                    let safeType = data.type || prev.type;
+                    if (!INVOICE_TYPES.includes(safeType)) {
+                        // Si el tipo devuelto no está exactamente en la lista, intentamos normalizar
+                        if (safeType.includes("Nota de Credito") && safeType.includes("A")) safeType = "Nota de Credito - Factura A";
+                        else if (safeType.includes("Nota de Credito") && safeType.includes("B")) safeType = "Nota de Credito - Factura B";
+                        else if (safeType.includes("Factura") && safeType.includes("A")) safeType = "Factura A";
+                        else if (safeType.includes("Factura") && safeType.includes("B")) safeType = "Factura B";
+                        // ...otros casos según se necesiten
+                    }
+
+                    return {
+                        ...prev,
+                        type: safeType,
+                        insurance: matchedInsurance || prev.insurance,
+                        date: safeDate,
+                        invoiceNumber: data.invoiceNumber || prev.invoiceNumber,
+                        description: data.description || prev.description,
+                        licensePlate: data.licensePlate || prev.licensePlate,
+                        amount: data.amount ? data.amount.toString() : prev.amount,
+                        subtotal: data.subtotal ? data.subtotal.toString() : prev.subtotal,
+                        vat: data.vat ? data.vat.toString() : prev.vat,
+                        siniestro: data.siniestro || prev.siniestro,
+                        cancelledInvoice: data.cancelledInvoice || prev.cancelledInvoice,
+                    };
                 });
-                if (foundByName) matchedInsurance = foundByName.value;
             }
-
-            if (!matchedInsurance && data.insurance) {
-                if (extractedName.includes("SEGUROS")) {
-                    matchedInsurance = "PARTICULAR"; 
-                } else {
-                    matchedInsurance = "PARTICULAR";
-                }
+        } catch (error: any) {
+            console.error(error);
+            alert("Hubo un error al analizar el documento con IA:\n" + error.message);
+            
+            // Revert invalid file state
+            setFormData(prev => ({ ...prev, fileName: '' }));
+            if (previewUrl) {
+                URL.revokeObjectURL(previewUrl);
+                setPreviewUrl(null);
             }
-
-            setFormData(prev => {
-                // FECHA SEGURA (Evita cambio de zona horaria)
-                let safeDate = prev.date;
-                if (data.date) {
-                    // data.date es 'YYYY-MM-DD'. Dividimos y creamos la fecha localmente
-                    const [year, month, day] = data.date.split('-').map(Number);
-                    // Mes en JS es 0-11
-                    safeDate = new Date(year, month - 1, day);
-                }
-
-                // TIPO DE COMPROBANTE
-                // El parser devuelve el tipo exacto (ej: "Nota de Credito A").
-                // Verificamos si existe en nuestra lista del modal, si no, intentamos un fallback inteligente.
-                let safeType = data.type || prev.type;
-                if (!INVOICE_TYPES.includes(safeType)) {
-                    // Si el tipo devuelto no está exactamente en la lista, intentamos normalizar
-                    if (safeType.includes("Nota de Credito") && safeType.includes("A")) safeType = "Nota de Credito - Factura A";
-                    else if (safeType.includes("Nota de Credito") && safeType.includes("B")) safeType = "Nota de Credito - Factura B";
-                    else if (safeType.includes("Factura") && safeType.includes("A")) safeType = "Factura A";
-                    else if (safeType.includes("Factura") && safeType.includes("B")) safeType = "Factura B";
-                    // ...otros casos según se necesiten
-                }
-
-                return {
-                    ...prev,
-                    type: safeType,
-                    insurance: matchedInsurance || prev.insurance,
-                    date: safeDate,
-                    invoiceNumber: data.invoiceNumber || prev.invoiceNumber,
-                    description: data.description || prev.description,
-                    licensePlate: data.licensePlate || prev.licensePlate,
-                    amount: data.amount ? data.amount.toString() : prev.amount,
-                    subtotal: data.subtotal ? data.subtotal.toString() : prev.subtotal,
-                    vat: data.vat ? data.vat.toString() : prev.vat,
-                    siniestro: data.siniestro || prev.siniestro,
-                    cancelledInvoice: data.cancelledInvoice || prev.cancelledInvoice,
-                };
-            });
+            if(fileInputRef.current) fileInputRef.current.value = '';
+        } finally {
+            setIsParsing(false);
         }
-        setIsParsing(false);
     };
 
     const handleSubmit = () => {
@@ -655,19 +669,25 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
                             ) : (
                                 <div className="flex items-center gap-3 w-full">
                                     <div className="bg-red-50 p-2.5 rounded-lg border border-red-100 flex-shrink-0">
-                                        <FileText className="h-6 w-6 text-red-500" />
+                                        {isParsing ? <Loader2 className="h-6 w-6 text-red-500 animate-spin" /> : <FileText className="h-6 w-6 text-red-500" />}
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <p className="text-sm font-bold text-gray-900 truncate">{formData.fileName}</p>
-                                        <p className="text-xs text-green-600 font-medium flex items-center mt-0.5">
-                                            <Check className="w-3 h-3 mr-1" /> Documento procesado correctamente
-                                        </p>
+                                        {isParsing ? (
+                                            <p className="text-xs text-slate-500 font-medium flex items-center mt-0.5">
+                                                Analizando documento con IA...
+                                            </p>
+                                        ) : (
+                                            <p className="text-xs text-green-600 font-medium flex items-center mt-0.5">
+                                                <Check className="w-3 h-3 mr-1" /> Documento procesado correctamente
+                                            </p>
+                                        )}
                                     </div>
                                     <div className="flex gap-2">
                                         <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); if(previewUrl) setIsPreviewOpen(true); }} title="Ver documento">
                                             <Eye className="w-4 h-4 text-gray-500 hover:text-blue-600" />
                                         </Button>
-                                        <Button variant="ghost" size="icon" onClick={clearFile} title="Eliminar">
+                                        <Button variant="ghost" size="icon" onClick={clearFile} title="Eliminar" disabled={isParsing}>
                                             <Trash2 className="w-4 h-4 text-gray-500 hover:text-red-600" />
                                         </Button>
                                     </div>

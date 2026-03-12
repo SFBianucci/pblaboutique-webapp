@@ -1,39 +1,76 @@
 import React, { useState } from 'react';
-import { RefreshCw, Plus, DollarSign, ArrowUpRight, ArrowRight, MoreHorizontal, CalendarClock, CreditCard, AlertCircle } from 'lucide-react';
+import { RefreshCw, Plus, DollarSign, ArrowUpRight, ArrowRight, MoreHorizontal, CalendarClock, CreditCard, AlertCircle, Package } from 'lucide-react';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { InsuranceSummary, Invoice } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
+import { useAppData } from '../lib/AppDataContext';
 
 interface DashboardProps {
     onNavigateToInvoice: (id: string) => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => {
+  const { appData } = useAppData();
   const [activeTab, setActiveTab] = useState<'pending' | 'paid' | 'overdue'>('pending');
 
-  const insurances: InsuranceSummary[] = [
-    { name: "ARMORAUT", cuit: "30-50003721-7", amount: 12450000.00, count: 42 },
-    { name: "ALLIANZ", cuit: "30-50003721-7", amount: 7431000.00, count: 11 },
-    { name: "CAJA SEGUROS", cuit: "30-50003721-7", amount: 4866474.49, count: 17 },
-    { name: "DIETRICH", cuit: "30-50003721-7", amount: 3506250.00, count: 19 },
-    { name: "ATM SEGUROS", cuit: "30-50003721-7", amount: 1448975.00, count: 6 },
-  ];
+  if (!appData) return null;
 
-  // Datos normalizados según types.ts actualizado
-  const recentInvoices: Invoice[] = [
-    { id: "3091", date: "30/01/2026", insurance: "ARMORAUT", invoiceNumber: "10524", licensePlate: "AG383VQ", amount: 151250.00, status: "pending", type: "Factura A", description: "COLOC KUGA", siniestro: "518132" },
-    { id: "3082", date: "28/01/2026", insurance: "ARMORAUT", invoiceNumber: "10513", licensePlate: "AH358RH", amount: 151250.00, status: "pending", type: "Factura A", description: "COLOC BRONCO", siniestro: "518509" },
-    { id: "3081", date: "28/01/2026", insurance: "ARMORAUT", invoiceNumber: "10514", licensePlate: "AH016YV", amount: 151250.00, status: "pending", type: "Factura A", description: "COLOC RANGER", siniestro: "518529" },
-    { id: "3080", date: "28/01/2026", insurance: "ARMORAUT", invoiceNumber: "10515", licensePlate: "AG390UQ", amount: 151250.00, status: "pending", type: "Factura A", description: "COLOC MAVERICK", siniestro: "518533" },
-    { id: "3043", date: "23/01/2026", insurance: "ARMORAUT", invoiceNumber: "10476", licensePlate: "AC574JX", amount: 90750.00, status: "pending", type: "Factura A", description: "CDIA ECO", siniestro: "1521" },
-    { id: "2854", date: "17/12/2025", insurance: "ARMORAUT", invoiceNumber: "10286", licensePlate: "AH469QJ", amount: 145200.00, status: "paid", type: "Factura A", description: "COLOC", siniestro: "517452" },
-    { id: "2848", date: "17/12/2025", insurance: "ARMORAUT", invoiceNumber: "10282", licensePlate: "AF785CF", amount: 620000.00, status: "paid", type: "Factura A", description: "PSAS TERRITORY", siniestro: "517290" },
-    { id: "2845", date: "17/12/2025", insurance: "ARMORAUT", invoiceNumber: "10283", licensePlate: "THF22492", amount: 800000.00, status: "pending", type: "Factura A", description: "PSAS TERRITORY", siniestro: "okm" },
-    { id: "2718", date: "28/11/2025", insurance: "ARMORAUT", invoiceNumber: "10170", licensePlate: "FIESTA", amount: 157300.00, status: "paid", type: "Factura A", description: "COLOC LTA LAVALE", siniestro: "310046" },
-    { id: "2561", date: "31/10/2025", insurance: "ARMORAUT", invoiceNumber: "10028", licensePlate: "AG336KY", amount: 145000.00, status: "paid", type: "Factura A", description: "PSAS FORD BRONCO", siniestro: "516635" },
-  ];
+  const { resumenFactura, turnos } = appData;
+
+  // 1. Cálculos de Facturación
+  // Sumamos todas las "Cobradas" que trajo el servidor (que ya vienen filtradas por los últimos 2 meses)
+  const facturasCobradas = resumenFactura.filter(inv => {
+    const status = (inv.Status_RF || inv.Status_x0020_RF || '').trim().toLowerCase();
+    return status === 'cobrada';
+  });
+  const facturacionMesTotal = facturasCobradas.reduce((acc, inv) => acc + (Number(inv.Total_RF) || 0), 0);
+
+  const facturasPendientes = resumenFactura.filter(inv => {
+    const status = (inv.Status_RF || inv.Status_x0020_RF || '').trim().toLowerCase();
+    return status === 'pendiente';
+  });
+  const aCobrarTotal = facturasPendientes.reduce((acc, inv) => acc + (Number(inv.Total_RF) || 0), 0);
+
+  const facturasVencidas = resumenFactura.filter(inv => {
+    const status = (inv.Status_RF || inv.Status_x0020_RF || '').trim().toLowerCase();
+    return status === 'vencida';
+  });
+  const vencidasTotal = facturasVencidas.reduce((acc, inv) => acc + (Number(inv.Total_RF) || 0), 0);
+
+  // 2. Ranking de Seguros (Agrupado por Seguro_RF)
+  const rankingMap = resumenFactura.reduce((acc: any, inv) => {
+    const insurance = inv.Seguro_RF || 'S/D';
+    if (!acc[insurance]) {
+      acc[insurance] = { name: insurance, amount: 0, count: 0 };
+    }
+    acc[insurance].amount += (Number(inv.Total_RF) || 0);
+    acc[insurance].count += 1;
+    return acc;
+  }, {});
+
+  const insurances: InsuranceSummary[] = Object.values(rankingMap)
+    .sort((a: any, b: any) => b.amount - a.amount) as InsuranceSummary[];
+
+  // 3. Mapeo de Movimientos Recientes
+  const recentInvoices: Invoice[] = resumenFactura.map((inv: any) => {
+    const status = (inv.Status_RF || inv.Status_x0020_RF || '').toLowerCase();
+    return {
+      id: inv.id,
+      date: inv.Fecha_RF,
+      insurance: inv.Seguro_RF || 'S/D',
+      invoiceNumber: String(inv.NroFactura_RF || ''),
+      licensePlate: inv.Patente_RF || '',
+      amount: Number(inv.Total_RF) || 0,
+      status: status === 'cobrada' ? 'paid' : 
+              status === 'anulada' ? 'overdue' : // Usamos el rojo de vencida o similar
+              status === 'vencida' ? 'overdue' : 'pending',
+      type: inv.TipoFactura_RF || 'Factura',
+      description: inv.Servicio_RF || '',
+      siniestro: inv.Siniestro_RF || ''
+    };
+  });
 
   const filteredInvoices = recentInvoices.filter(inv => {
       if (activeTab === 'paid') return inv.status === 'paid';
@@ -41,6 +78,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => 
       if (activeTab === 'overdue') return inv.status === 'overdue';
       return false; 
   });
+
+  // 4. Turnos de hoy
+  const turnosHoyCount = turnos.length;
+  const turnosTerminados = turnos.filter((t: any) => t.Status_T === 'Entregado' || t.Status_T === 'Terminado').length;
+  const turnosPendientes = turnosHoyCount - turnosTerminados;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -61,8 +103,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => 
           </div>
       </div>
 
-      {/* 2. KPI Cards - COMPACT ROW (4 Columns) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 2. KPI Cards - COMPACT ROW (3 Columns) */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         {/* Card 1: Facturación */}
         <Card className="border border-gray-100 shadow-sm hover:shadow-md transition-all">
             <CardContent className="p-4 flex flex-col gap-1">
@@ -70,7 +112,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => 
                     <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Facturación Mes</span>
                     <DollarSign className="h-4 w-4 text-gray-400" />
                 </div>
-                <span className="text-2xl font-bold text-gray-900 tracking-tight">{formatCurrency(18950200)}</span>
+                <span className="text-2xl font-bold text-gray-900 tracking-tight">{formatCurrency(facturacionMesTotal)}</span>
                 <span className="text-[10px] font-medium text-green-600 flex items-center bg-green-50 w-fit px-1.5 rounded-sm">
                     <ArrowUpRight className="w-3 h-3 mr-0.5" /> +12.5%
                 </span>
@@ -84,26 +126,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => 
                     <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">A Cobrar</span>
                     <AlertCircle className="h-4 w-4 text-orange-400" />
                 </div>
-                <span className="text-2xl font-bold text-gray-900 tracking-tight">{formatCurrency(2450000)}</span>
+                <span className="text-2xl font-bold text-gray-900 tracking-tight">{formatCurrency(aCobrarTotal)}</span>
                 <span className="text-[10px] font-medium text-orange-600 flex items-center bg-orange-50 w-fit px-1.5 rounded-sm">
-                     8 vencidas
+                     {formatCurrency(vencidasTotal)} vencidas
                 </span>
             </CardContent>
         </Card>
 
-        {/* Card 3: Caja Diaria */}
-        <Card className="border border-gray-100 shadow-sm hover:shadow-md transition-all">
-            <CardContent className="p-4 flex flex-col gap-1">
-                 <div className="flex justify-between items-center mb-1">
-                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Caja Hoy</span>
-                    <CreditCard className="h-4 w-4 text-blue-400" />
-                </div>
-                <span className="text-2xl font-bold text-gray-900 tracking-tight">{formatCurrency(125000)}</span>
-                <span className="text-[10px] font-medium text-gray-400 flex items-center">
-                    Último cierre: 18:00hs
-                </span>
-            </CardContent>
-        </Card>
 
         {/* Card 4: Turnos */}
         <Card className="border border-gray-100 shadow-sm hover:shadow-md transition-all bg-green-50/30 border-green-100">
@@ -113,11 +142,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => 
                     <CalendarClock className="h-4 w-4 text-green-600" />
                 </div>
                 <div className="flex items-end gap-2">
-                    <span className="text-2xl font-bold text-gray-900 tracking-tight">5</span>
-                    <span className="text-xs text-gray-500 mb-1 font-medium">autos</span>
+                    <span className="text-2xl font-bold text-gray-900 tracking-tight">{turnosHoyCount}</span>
+                    <span className="text-xs text-gray-500 mb-1 font-medium">{turnosHoyCount === 1 ? 'auto' : 'autos'}</span>
                 </div>
                 <span className="text-[10px] font-medium text-green-700 flex items-center">
-                    2 terminados • 3 pendientes
+                    {turnosTerminados} terminados • {turnosPendientes} pendientes
                 </span>
             </CardContent>
         </Card>
@@ -164,7 +193,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => 
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
-                        {filteredInvoices.slice(0, 8).map((inv, idx) => (
+                        {filteredInvoices.length === 0 ? (
+                            <tr>
+                                <td colSpan={6} className="px-5 py-10 text-center text-gray-400 text-xs italic">
+                                    No hay registros que mostrar.
+                                </td>
+                            </tr>
+                        ) : filteredInvoices.slice(0, 8).map((inv, idx) => (
                             <tr 
                                 key={idx} 
                                 onClick={() => onNavigateToInvoice(inv.id)}
@@ -195,7 +230,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => 
                                             ? "bg-green-50 text-green-700 border-green-100" 
                                             : "bg-orange-50 text-orange-700 border-orange-100"
                                     )}>
-                                        {inv.status === 'paid' ? 'Cobrada' : 'Pendiente'}
+                                        {inv.status === 'paid' ? 'Cobrada' : 
+                                         inv.status === 'overdue' && (resumenFactura.find(r => r.id === inv.id)?.Status_RF || '').toLowerCase().includes('anulada') ? 'Anulada' :
+                                         inv.status === 'overdue' ? 'Vencida' : 'Pendiente'}
                                     </span>
                                 </td>
                                 <td className="px-2 py-3 text-center">
@@ -220,11 +257,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => 
         {/* Right Column: Insurance Summary */}
         <div className="xl:col-span-1">
            <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-full flex flex-col">
-              <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between bg-gray-50/30">
-                 <h3 className="font-bold text-gray-800 text-sm uppercase tracking-wide">Ranking</h3>
-                 <span className="text-[10px] text-gray-400 font-mono">{new Date().getFullYear()}</span>
+              <div className="px-5 py-3 border-b border-gray-100 flex flex-col gap-0.5 bg-gray-50/30">
+                 <div className="flex items-center justify-between">
+                    <h3 className="font-bold text-gray-800 text-sm uppercase tracking-wide">Ranking</h3>
+                    <span className="text-[10px] text-gray-400 font-mono">{new Date().getFullYear()}</span>
+                 </div>
+                 <p className="text-[9px] text-gray-400 italic">Basado solo en facturas cobradas</p>
               </div>
-              <div className="flex-1 overflow-y-auto max-h-[500px] p-2 space-y-1 custom-scrollbar">
+              <div className="flex-1 overflow-y-auto max-h-[600px] p-2 space-y-1 custom-scrollbar">
                   {insurances.map((ins, idx) => (
                       <div key={idx} className="p-2.5 rounded hover:bg-gray-50 transition-colors cursor-default group border border-transparent hover:border-gray-100">
                           <div className="flex justify-between items-center mb-1.5">

@@ -2,22 +2,48 @@ import React, { useState } from 'react';
 import { Eye, EyeOff, Loader2, ShieldCheck, Wrench } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { useAuth } from '../lib/AuthContext';
 
-interface LoginProps {
-  onLogin: () => void;
-}
-
-export const Login: React.FC<LoginProps> = ({ onLogin }) => {
+export const Login: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const { login } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
     setIsLoading(true);
-    // Simular petición de red
-    setTimeout(() => {
-        onLogin();
-    }, 800);
+    
+    try {
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Error al iniciar sesión');
+      }
+
+      if (data.success && data.token) {
+        login(data.token, data.user);
+      } else {
+        throw new Error('Respuesta inválida del servidor');
+      }
+
+    } catch (err: any) {
+        console.error('Login error:', err);
+        setError(err.message || 'Error al conectar con el servidor');
+    } finally {
+        setIsLoading(false);
+    }
   };
 
   return (
@@ -50,15 +76,23 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
             </div>
 
             <form className="space-y-5" onSubmit={handleSubmit}>
+                {error && (
+                    <div className="p-3 text-sm text-red-600 bg-red-50 rounded-lg">
+                        {error}
+                    </div>
+                )}
+                
                 <div className="space-y-1.5">
                     <label className="text-xs font-bold text-gray-700 uppercase tracking-wide ml-1">
                         Usuario
                     </label>
                     <Input 
-                        id="email-mobile"
+                        id="username-mobile"
                         type="text" 
                         placeholder="admin@bouticapp.com" 
                         className="h-12 bg-white border-gray-200 focus:border-green-600 focus:ring-green-600/20"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
                         required
                     />
                 </div>
@@ -75,6 +109,8 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                             type={showPassword ? "text" : "password"} 
                             placeholder="••••••••" 
                             className="h-12 pr-10 bg-white border-gray-200 focus:border-green-600 focus:ring-green-600/20"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
                             required
                         />
                          <button
@@ -160,13 +196,21 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 </div>
 
                 <form className="space-y-6" onSubmit={handleSubmit}>
+                    {error && (
+                        <div className="p-3 text-sm text-red-600 bg-red-50 rounded-lg">
+                            {error}
+                        </div>
+                    )}
+                    
                     <div className="space-y-2">
-                        <label className="text-sm font-semibold text-gray-700">Correo Electrónico</label>
+                        <label className="text-sm font-semibold text-gray-700">Usuario</label>
                         <Input 
-                          id="email-desktop"
+                          id="username-desktop"
                           type="text" 
                           placeholder="admin@bouticapp.com" 
                           className="h-12 bg-white border-gray-200 focus:border-green-600 focus:ring-green-600/20"
+                          value={username}
+                          onChange={(e) => setUsername(e.target.value)}
                           required
                         />
                     </div>
@@ -181,6 +225,8 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                             type={showPassword ? "text" : "password"} 
                             placeholder="••••••••" 
                             className="h-12 pr-10 bg-white border-gray-200 focus:border-green-600 focus:ring-green-600/20"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
                             required
                           />
                           <button

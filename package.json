@@ -9,12 +9,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@azure/msal-node": "^5.0.6",
     "@google/genai": "^1.44.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
     "@radix-ui/react-dialog": "1.0.5",
     "@radix-ui/react-popover": "1.0.7",
     "clsx": "2.1.1",
     "cmdk": "1.0.0",
     "date-fns": "3.6.0",
+    "dotenv": "^17.3.1",
+    "jsonwebtoken": "^9.0.3",
     "lucide-react": "0.379.0",
     "motion": "^12.34.3",
     "pdfjs-dist": "3.11.174",
@@ -24,6 +28,7 @@
     "xlsx": "latest"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
