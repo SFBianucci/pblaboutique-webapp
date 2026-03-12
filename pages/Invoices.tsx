@@ -840,7 +840,7 @@ export const Invoices: React.FC = () => {
                       event.preventDefault();
                     }
                   }}
-                  className="z-[100] w-[320px] bg-white border border-slate-200 shadow-2xl rounded-xl overflow-hidden animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
+                  className="z-[9999] w-[320px] bg-white border border-slate-200 shadow-2xl rounded-xl overflow-hidden animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
                 >
                   <div className="bg-slate-50/50 px-4 py-3 border-b border-slate-100 flex items-center justify-between">
                     <div className="flex items-center gap-2">
