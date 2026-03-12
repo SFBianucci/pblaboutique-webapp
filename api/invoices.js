@@ -48,8 +48,11 @@ const toNumberOrZero = (value) => {
 const toInvoiceNumber = (value) => {
   const raw = String(value || "").trim();
   if (!raw) return 0;
-  const digitsOnly = raw.replace(/\D/g, "");
-  const number = Number(digitsOnly || raw);
+
+  // If invoice has a point-of-sale prefix (e.g. 0002-10592), persist only the suffix.
+  const suffix = raw.includes("-") ? String(raw.split("-").pop() || "").trim() : raw;
+  const digitsOnly = suffix.replace(/\D/g, "");
+  const number = Number(digitsOnly || suffix);
   return Number.isFinite(number) ? number : 0;
 };
 
