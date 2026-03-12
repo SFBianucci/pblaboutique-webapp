@@ -47,6 +47,7 @@ import * as XLSX from "xlsx";
 const mapBackendStatusToUiStatus = (statusRaw: string) => {
   const status = (statusRaw || "").trim().toLowerCase();
   if (status === "cobrada") return "paid";
+  if (status === "cancelada x nc" || status === "cancelada por nc") return "deleted";
   if (status === "anulada") return "deleted";
   if (status === "vencida") return "deleted";
   return "pending";
@@ -62,6 +63,7 @@ const mapResumenFacturaToInvoices = (items: any[]): Invoice[] => {
     type: inv.TipoFactura_RF || "Factura",
     amount: Number(inv.Total_RF) || 0,
     status: mapBackendStatusToUiStatus(inv.Status_RF || inv.Status_x0020_RF || "") as Invoice["status"],
+    backendStatus: String(inv.Status_RF || inv.Status_x0020_RF || "").trim(),
     description: inv.Servicio_RF || "",
     siniestro: inv.Siniestro_RF || "",
     fileName: inv.fileName || inv.PDFFactura_FFS || "",
@@ -82,7 +84,9 @@ const isCreditNoteInvoice = (inv: Invoice) => {
 };
 
 const isCancelledByCreditNote = (inv: Invoice) =>
-  inv.status === "deleted" && Boolean(String(inv.cancelledInvoice || "").trim());
+  inv.status === "deleted" &&
+  (normalizeText(inv.backendStatus || "") === "cancelada x nc" ||
+    Boolean(String(inv.cancelledInvoice || "").trim()));
 
 const getInvoiceRowToneClassName = (inv: Invoice) => {
   if (isCancelledByCreditNote(inv)) {
@@ -635,7 +639,9 @@ export const Invoices: React.FC = () => {
           ? "Cobrada"
           : inv.status === "pending"
             ? "Pendiente"
-            : "Anulada",
+            : isCancelledByCreditNote(inv)
+              ? "Cancelada x NC"
+              : "Anulada",
       Subtotal: inv.type.includes("Exenta") ? inv.amount : inv.amount / 1.21,
       IVA: inv.type.includes("Exenta") ? 0 : inv.amount - inv.amount / 1.21,
       Total: inv.amount,
@@ -666,7 +672,8 @@ export const Invoices: React.FC = () => {
   };
 
   // --- RENDER HELPERS ---
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (inv: Invoice) => {
+    const status = inv.status;
     switch (status) {
       case "paid":
         return (
@@ -696,6 +703,16 @@ export const Invoices: React.FC = () => {
           </Badge>
         );
       case "deleted":
+        if (isCancelledByCreditNote(inv)) {
+          return (
+            <Badge
+              variant="outline"
+              className="text-orange-700 border-orange-200/70 bg-orange-50 px-2.5 py-0.5 text-[11px] font-semibold rounded-full"
+            >
+              Cancelada x NC
+            </Badge>
+          );
+        }
         return (
           <Badge
             variant="outline"
@@ -1240,7 +1257,7 @@ export const Invoices: React.FC = () => {
                         </button>
                       </td>
                       <td className="py-3 px-4 align-middle">
-                        {getStatusBadge(inv.status)}
+                        {getStatusBadge(inv)}
                       </td>
                       <td className="py-3 px-4 align-middle">
                         <span className="font-mono text-slate-600 text-xs font-medium block">

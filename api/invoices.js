@@ -20,10 +20,23 @@ const MONTH_NAMES_ES = [
 const mapUiStatusToBackendStatus = (status) => {
   const normalized = String(status || "").trim().toLowerCase();
   if (normalized === "paid" || normalized === "cobrada") return "Cobrada";
+  if (normalized === "cancelada x nc" || normalized === "cancelada por nc") return "Cancelada x NC";
   if (normalized === "deleted" || normalized === "anulada") return "Anulada";
   if (normalized === "overdue" || normalized === "vencida") return "Vencida";
   if (normalized === "pending" || normalized === "pendiente") return "Pendiente";
   return "Pendiente";
+};
+
+const normalizeComparableText = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const isCreditNoteType = (invoiceType) => {
+  const normalizedType = normalizeComparableText(invoiceType);
+  return normalizedType.includes("nota de credito") || normalizedType.startsWith("nc");
 };
 
 const parseDateFromUi = (dateString) => {
@@ -54,6 +67,11 @@ const toInvoiceNumber = (value) => {
   const digitsOnly = suffix.replace(/\D/g, "");
   const number = Number(digitsOnly || suffix);
   return Number.isFinite(number) ? number : 0;
+};
+
+const toNormalizedInvoiceNumberText = (value) => {
+  const parsed = toInvoiceNumber(value);
+  return parsed ? String(parsed) : "";
 };
 
 const sanitizeFileName = (name) => {
@@ -146,9 +164,46 @@ const mapStatusFilter = (status) => {
   const normalized = String(status || "").trim().toLowerCase();
   if (normalized === "pending") return ["pendiente"];
   if (normalized === "paid") return ["cobrada"];
-  if (normalized === "deleted") return ["anulada", "vencida"];
+  if (normalized === "deleted") return ["anulada", "vencida", "cancelada x nc", "cancelada"];
   return [];
 };
+
+async function markInvoiceAsCancelledByNc(client, siteId, targetInvoiceNumber, ncInvoiceNumber, ncInvoiceId) {
+  const targetNumber = toInvoiceNumber(targetInvoiceNumber);
+  if (!targetNumber) return;
+
+  const allResumen = await fetchAllListItems(client, siteId, LIST_IDS.resumenFactura);
+  const match = allResumen.find((item) => {
+    const currentNumber = Number(item.NroFactura_RF || 0);
+    if (!Number.isFinite(currentNumber) || currentNumber !== targetNumber) return false;
+    if (ncInvoiceId && String(item.id) === String(ncInvoiceId)) return false;
+    return true;
+  });
+
+  if (!match?.id) return;
+
+  await client
+    .api(`/sites/${siteId}/lists/${LIST_IDS.resumenFactura}/items/${match.id}/fields`)
+    .patch({
+      Status_RF: "Cancelada x NC",
+      NroFacturaCancelacion_RF: toNormalizedInvoiceNumberText(ncInvoiceNumber),
+    });
+}
+
+async function findInvoiceByNumber(client, siteId, targetInvoiceNumber, excludeInvoiceId) {
+  const targetNumber = toInvoiceNumber(targetInvoiceNumber);
+  if (!targetNumber) return null;
+
+  const allResumen = await fetchAllListItems(client, siteId, LIST_IDS.resumenFactura);
+  return (
+    allResumen.find((item) => {
+      const currentNumber = Number(item.NroFactura_RF || 0);
+      if (!Number.isFinite(currentNumber) || currentNumber !== targetNumber) return false;
+      if (excludeInvoiceId && String(item.id) === String(excludeInvoiceId)) return false;
+      return true;
+    }) || null
+  );
+}
 
 const parseMultiQueryParam = (rawValue) => {
   const normalized = String(rawValue || "").trim().toLowerCase();
@@ -366,6 +421,19 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Numero de comprobante y seguro son obligatorios" });
     }
 
+    const normalizedCancelledInvoiceNumber = toNormalizedInvoiceNumberText(invoice.cancelledInvoice);
+    const shouldValidateCancelledInvoice =
+      isCreditNoteType(invoice.type) && Boolean(normalizedCancelledInvoiceNumber);
+
+    if (shouldValidateCancelledInvoice) {
+      const matchedInvoice = await findInvoiceByNumber(client, siteId, normalizedCancelledInvoiceNumber, id);
+      if (!matchedInvoice?.id) {
+        return res.status(400).json({
+          error: `No existe una factura con el numero ${normalizedCancelledInvoiceNumber} para cancelar.`,
+        });
+      }
+    }
+
     const now = new Date();
     const issueMonth = issueDate.getMonth();
     const issueYear = issueDate.getFullYear();
@@ -387,7 +455,7 @@ export default async function handler(req, res) {
       IVA_RF: toNumberOrZero(invoice.vat),
       Siniestro_RF: String(invoice.siniestro || ""),
       Servicio_RF: String(invoice.description || "").toUpperCase(),
-      NroFacturaCancelacion_RF: String(invoice.cancelledInvoice || ""),
+      NroFacturaCancelacion_RF: normalizedCancelledInvoiceNumber,
     };
 
     let invoiceId = String(id || "").trim();
@@ -404,6 +472,16 @@ export default async function handler(req, res) {
         });
 
       invoiceId = createResponse.id;
+
+      if (isCreditNoteType(invoice.type) && normalizedCancelledInvoiceNumber) {
+        await markInvoiceAsCancelledByNc(
+          client,
+          siteId,
+          normalizedCancelledInvoiceNumber,
+          invoice.invoiceNumber,
+          invoiceId,
+        );
+      }
     } else {
       if (!invoiceId) {
         return res.status(400).json({ error: "Falta el ID de la factura a editar" });
@@ -412,6 +490,16 @@ export default async function handler(req, res) {
       await client
         .api(`/sites/${siteId}/lists/${LIST_IDS.resumenFactura}/items/${invoiceId}/fields`)
         .patch(commonFields);
+
+      if (isCreditNoteType(invoice.type) && normalizedCancelledInvoiceNumber) {
+        await markInvoiceAsCancelledByNc(
+          client,
+          siteId,
+          normalizedCancelledInvoiceNumber,
+          invoice.invoiceNumber,
+          invoiceId,
+        );
+      }
     }
 
     const attachmentResult = await upsertInvoiceAttachment(

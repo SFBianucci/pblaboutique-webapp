@@ -14,6 +14,7 @@ export interface Invoice {
   fileName?: string;
   fileDataUrl?: string;
   cancelledInvoice?: string;
+  backendStatus?: string;
 }
 
 export interface InsuranceSummary {
