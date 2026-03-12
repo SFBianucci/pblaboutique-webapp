@@ -1,5 +1,3 @@
-export type View = 'login' | 'dashboard' | 'invoices' | 'inventory' | 'accounts' | 'appointments' | 'reports' | 'stock-reports' | 'abm';
-
 export interface Invoice {
   id: string;
   date: string;           
@@ -14,6 +12,7 @@ export interface Invoice {
   subtotal?: number;
   vat?: number;
   fileName?: string;
+  fileDataUrl?: string;
   cancelledInvoice?: string;
 }
 

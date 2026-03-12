@@ -1,6 +1,7 @@
 import React from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import { View } from '../types';
+import { ROUTES } from '../lib/routes';
 import { 
   LayoutDashboard, Receipt, Package, CreditCard, CalendarClock, 
   PieChart, BarChart4, Settings, LogOut 
@@ -8,22 +9,41 @@ import {
 import { useAuth } from '../lib/AuthContext';
 
 interface SidebarProps {
-  currentView: View;
-  onNavigate: (view: View) => void;
+  onMobileClose?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ onMobileClose }) => {
   const { logout } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const disabledPaths = new Set<string>([
+    ROUTES.inventory,
+    ROUTES.accounts,
+    ROUTES.reports,
+    ROUTES.stockReports,
+    ROUTES.settings,
+  ]);
+
   const menuItems = [
-    { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
-    { id: 'invoices', label: 'Facturación', icon: Receipt },
-    { id: 'inventory', label: 'Inventario', icon: Package },
-    { id: 'accounts', label: 'Ctas. Ctes.', icon: CreditCard },
-    { id: 'appointments', label: 'Turnos', icon: CalendarClock },
-    { id: 'reports', label: 'Rep. Seguros', icon: PieChart },
-    { id: 'stock-reports', label: 'Rep. Stock', icon: BarChart4 },
-    { id: 'abm', label: 'Configuración', icon: Settings },
+    { path: ROUTES.dashboard, label: 'Home', icon: LayoutDashboard },
+    { path: ROUTES.invoices, label: 'Facturación', icon: Receipt },
+    { path: ROUTES.appointments, label: 'Turnos', icon: CalendarClock },
+    { path: ROUTES.inventory, label: 'Inventario', icon: Package },
+    { path: ROUTES.accounts, label: 'Ctas. Ctes.', icon: CreditCard },
+    { path: ROUTES.reports, label: 'Rep. Seguros', icon: PieChart },
+    { path: ROUTES.stockReports, label: 'Rep. Stock', icon: BarChart4 },
+    { path: ROUTES.settings, label: 'Configuración', icon: Settings },
   ];
+
+  const enabledMenuItems = menuItems.filter((item) => !disabledPaths.has(item.path));
+  const disabledMenuItems = menuItems.filter((item) => disabledPaths.has(item.path));
+
+  const handleNavigate = (path: string) => {
+    if (disabledPaths.has(path)) return;
+    navigate(path);
+    onMobileClose?.();
+  };
 
   return (
     <div className="flex flex-col h-full bg-[#0a1f11] text-gray-300 relative overflow-hidden font-sans">
@@ -50,17 +70,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
              <p className="text-[10px] font-bold text-green-500/50 uppercase tracking-[0.15em]">Menu Principal</p>
         </div>
         
-        {menuItems.map((item) => {
-          const isActive = currentView === item.id;
+        {enabledMenuItems.map((item) => {
+          const isActive = location.pathname === item.path;
+          const isDisabled = false;
           return (
             <button
-              key={item.id}
-              onClick={() => onNavigate(item.id as View)}
+              key={item.path}
+              onClick={() => handleNavigate(item.path)}
+              disabled={isDisabled}
+              aria-disabled={isDisabled}
+              title={isDisabled ? 'Modulo deshabilitado temporalmente' : undefined}
               className={cn(
                 "w-full flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-all duration-300 group relative overflow-hidden",
                 isActive
                   ? "text-white" 
-                  : "text-gray-400 hover:text-gray-100 hover:bg-white/5"
+                  : isDisabled
+                    ? "text-gray-500/60 cursor-not-allowed"
+                    : "text-gray-400 hover:text-gray-100 hover:bg-white/5"
               )}
             >
               {/* Active State Background & Indicator */}
@@ -73,13 +99,62 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
 
               <item.icon className={cn(
                   "h-4 w-4 mr-3 relative z-10 transition-colors duration-300",
-                  isActive ? "text-green-400" : "text-gray-500 group-hover:text-green-300"
+                  isActive
+                    ? "text-green-400"
+                    : isDisabled
+                      ? "text-gray-600/70"
+                      : "text-gray-500 group-hover:text-green-300"
               )} />
               
               <span className={cn(
                   "relative z-10 transition-transform duration-300",
-                  !isActive && "group-hover:translate-x-1"
+                  !isActive && !isDisabled && "group-hover:translate-x-1"
               )}>{item.label}</span>
+
+              {isDisabled ? (
+                <span className="ml-auto text-[10px] font-semibold uppercase tracking-wide text-gray-500/80">
+                  Off
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+
+        {disabledMenuItems.length > 0 ? (
+          <div className="px-3 mb-2 mt-5">
+            <p className="text-[10px] font-bold text-gray-500/50 uppercase tracking-[0.15em]">Deshabilitados</p>
+          </div>
+        ) : null}
+
+        {disabledMenuItems.map((item) => {
+          const isActive = location.pathname === item.path;
+          const isDisabled = true;
+          return (
+            <button
+              key={item.path}
+              onClick={() => handleNavigate(item.path)}
+              disabled={isDisabled}
+              aria-disabled={isDisabled}
+              title={isDisabled ? 'Modulo deshabilitado temporalmente' : undefined}
+              className={cn(
+                "w-full flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-all duration-300 group relative overflow-hidden",
+                isActive
+                  ? "text-white"
+                  : "text-gray-500/60 cursor-not-allowed"
+              )}
+            >
+              <item.icon className={cn(
+                  "h-4 w-4 mr-3 relative z-10 transition-colors duration-300",
+                  isActive
+                    ? "text-green-400"
+                    : "text-gray-600/70"
+              )} />
+
+              <span className={cn("relative z-10 transition-transform duration-300")}>{item.label}</span>
+
+              <span className="ml-auto text-[10px] font-semibold uppercase tracking-wide text-gray-500/80">
+                Off
+              </span>
             </button>
           );
         })}

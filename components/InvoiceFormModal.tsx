@@ -102,17 +102,21 @@ const formatCurrencyInput = (value: string | number) => {
 };
 
 const parseCurrencyInput = (value: string) => {
-    let cleanVal = value;
-    if (cleanVal.includes(',') && cleanVal.includes('.')) {
-        if (cleanVal.lastIndexOf(',') > cleanVal.lastIndexOf('.')) {
-            cleanVal = cleanVal.replace(/\./g, '').replace(',', '.');
-        } else {
-            cleanVal = cleanVal.replace(/,/g, '');
-        }
-    } else if (cleanVal.includes(',')) {
-        cleanVal = cleanVal.replace(',', '.');
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+
+    // Formato AR: punto como separador de miles y coma como separador decimal.
+    const onlyValidChars = raw.replace(/[^\d.,]/g, '');
+
+    if (onlyValidChars.includes(',')) {
+        const [intPartRaw, ...decParts] = onlyValidChars.split(',');
+        const intPart = intPartRaw.replace(/\./g, '');
+        const decimalPart = decParts.join('').replace(/\./g, '');
+        return decimalPart ? `${intPart}.${decimalPart}` : intPart;
     }
-    return cleanVal;
+
+    // Si solo hay puntos, asumimos miles (ej: 250.000 => 250000).
+    return onlyValidChars.replace(/\./g, '');
 };
 
 const calculateValues = (totalVal: string, type: string) => {
@@ -132,9 +136,50 @@ const calculateValues = (totalVal: string, type: string) => {
 interface InvoiceFormModalProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    onSave: (data: any) => void;
+    onSave: (data: any) => Promise<boolean> | boolean;
     initialData?: any;
 }
+
+const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = reader.result;
+            if (typeof result !== 'string') {
+                reject(new Error('No se pudo leer el archivo'));
+                return;
+            }
+            const base64 = result.includes(',') ? result.split(',')[1] : result;
+            resolve(base64);
+        };
+        reader.onerror = () => reject(reader.error || new Error('Error al leer archivo'));
+        reader.readAsDataURL(file);
+    });
+};
+
+const fileToDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            if (typeof reader.result !== 'string') {
+                reject(new Error('No se pudo generar preview del archivo'));
+                return;
+            }
+            resolve(reader.result);
+        };
+        reader.onerror = () => reject(reader.error || new Error('Error al generar preview'));
+        reader.readAsDataURL(file);
+    });
+};
+
+const isBlobUrl = (value: string | null) => typeof value === 'string' && value.startsWith('blob:');
+
+const isPdfFile = (fileName: string, fileUrl?: string | null) => {
+    const byName = fileName.toLowerCase().endsWith('.pdf');
+    const byDataUrl = (fileUrl || '').toLowerCase().startsWith('data:application/pdf');
+    const byUrl = (fileUrl || '').toLowerCase().includes('.pdf');
+    return byName || byDataUrl || byUrl;
+};
 
 export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({ 
     open, 
@@ -152,6 +197,9 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
     
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [attachmentRemoved, setAttachmentRemoved] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
 
     const [formData, setFormData] = useState({
         type: 'Factura A',
@@ -165,6 +213,7 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
         vat: '',
         description: '',
         fileName: '',
+        fileDataUrl: '',
         cancelledInvoice: ''
     });
 
@@ -185,9 +234,16 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
                     date: parsedDate,
                     amount: initialAmount,
                     subtotal: sub,
-                    vat: vat
+                    vat: vat,
+                    fileDataUrl: initialData.fileDataUrl || ''
                 });
+                setPreviewUrl(initialData.fileDataUrl || null);
+                setSelectedFile(null);
+                setAttachmentRemoved(false);
             } else {
+                if (previewUrl && isBlobUrl(previewUrl)) {
+                    URL.revokeObjectURL(previewUrl);
+                }
                 setFormData(prev => ({
                     ...prev,
                     type: 'Factura A',
@@ -201,12 +257,16 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
                     vat: '',
                     description: '',
                     fileName: '',
+                    fileDataUrl: '',
                     cancelledInvoice: ''
                 }));
+                setPreviewUrl(null);
+                setSelectedFile(null);
+                setAttachmentRemoved(false);
             }
         }
         return () => {
-            if (previewUrl) URL.revokeObjectURL(previewUrl);
+            if (previewUrl && isBlobUrl(previewUrl)) URL.revokeObjectURL(previewUrl);
             setPreviewUrl(null);
         };
     }, [open, initialData]);
@@ -235,9 +295,11 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
             return;
         }
 
-        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        if (previewUrl && isBlobUrl(previewUrl)) URL.revokeObjectURL(previewUrl);
         const url = URL.createObjectURL(file);
         setPreviewUrl(url);
+        setSelectedFile(file);
+        setAttachmentRemoved(false);
 
         setIsParsing(true);
         setFormData(prev => ({ ...prev, fileName: file.name }));
@@ -319,17 +381,18 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
             
             // Revert invalid file state
             setFormData(prev => ({ ...prev, fileName: '' }));
-            if (previewUrl) {
+            if (previewUrl && isBlobUrl(previewUrl)) {
                 URL.revokeObjectURL(previewUrl);
                 setPreviewUrl(null);
             }
+            setSelectedFile(null);
             if(fileInputRef.current) fileInputRef.current.value = '';
         } finally {
             setIsParsing(false);
         }
     };
 
-    const handleSubmit = () => {
+    const handleSubmit = async () => {
         if (!formData.insurance || formData.insurance === "Elegir") {
             alert("Selecciona un Seguro/Cliente");
             return;
@@ -344,39 +407,59 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
         }
 
         const cleanAmount = parseCurrencyInput(formData.amount);
-        const finalData = {
+        const finalData: any = {
             ...formData,
-            date: format(formData.date, 'dd/MM/yyyy'), 
+            date: format(formData.date, 'dd/MM/yyyy'),
             amount: parseFloat(cleanAmount) * (isCreditNote ? -1 : 1),
+            subtotal: parseFloat(formData.subtotal || '0') * (isCreditNote ? -1 : 1),
+            vat: parseFloat(formData.vat || '0') * (isCreditNote ? -1 : 1),
+            fileDataUrl: previewUrl || '',
+            removeAttachment: attachmentRemoved,
         };
 
-        onSave(finalData);
-        onOpenChange(false);
+        if (selectedFile) {
+            const [fileBase64, fileDataUrl] = await Promise.all([
+                fileToBase64(selectedFile),
+                fileToDataUrl(selectedFile),
+            ]);
+
+            finalData.attachment = {
+                fileName: selectedFile.name,
+                mimeType: selectedFile.type || 'application/octet-stream',
+                fileBase64,
+                fileDataUrl,
+            };
+            finalData.fileDataUrl = fileDataUrl;
+            finalData.fileName = selectedFile.name;
+        }
+
+        try {
+            setIsSaving(true);
+            const saved = await onSave(finalData);
+            if (saved === false) return;
+            onOpenChange(false);
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const clearFile = (e: React.MouseEvent) => {
         e.stopPropagation();
         
         if(fileInputRef.current) fileInputRef.current.value = '';
-        if (previewUrl) {
+        if (previewUrl && isBlobUrl(previewUrl)) {
             URL.revokeObjectURL(previewUrl);
             setPreviewUrl(null);
+        } else {
+            setPreviewUrl(null);
         }
+        setSelectedFile(null);
+        setAttachmentRemoved(true);
 
         setFormData(prev => ({
             ...prev, 
             fileName: '',
-            // Reseteamos campos extraídos del PDF
-            invoiceNumber: '',
-            insurance: '', // SE AGREGÓ RESETEO DE SEGURO EXPLICITO
-            amount: '',
-            subtotal: '',
-            vat: '',
-            description: '',
-            licensePlate: '',
-            siniestro: '',
-            date: new Date(), 
-            // Nota: Mantenemos 'type' por conveniencia, pero seguro se resetea.
+            fileDataUrl: '',
         }));
     };
 
@@ -713,8 +796,11 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
                                 isCreditNote ? "bg-orange-600 hover:bg-orange-700 shadow-orange-900/20" : "bg-[#114a28] hover:bg-[#0e3b20] shadow-green-900/20"
                             )}
                             onClick={handleSubmit}
+                            disabled={isSaving || isParsing}
                         >
-                            {initialData ? "Guardar Cambios" : (isCreditNote ? "Generar Nota de Crédito" : "Guardar Factura")}
+                            {isSaving
+                                ? "Guardando..."
+                                : (initialData ? "Guardar Cambios" : (isCreditNote ? "Generar Nota de Crédito" : "Guardar Factura"))}
                         </Button>
                     </div>
                 </div>
@@ -737,7 +823,7 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
                         </div>
                         <div className="flex-1 bg-gray-100 relative">
                              {previewUrl ? (
-                                 formData.fileName.toLowerCase().endsWith('.pdf') ? (
+                                 isPdfFile(formData.fileName || '', previewUrl) ? (
                                      <object
                                         data={previewUrl}
                                         type="application/pdf"

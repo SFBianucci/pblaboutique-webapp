@@ -21,7 +21,7 @@ interface AppDataContextType {
 const AppDataContext = createContext<AppDataContextType | undefined>(undefined);
 
 export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, token } = useAuth();
+  const { isAuthenticated, token, logout } = useAuth();
   
   const [appData, setAppData] = useState<AppDataType | null>(null);
   const [isInitializingData, setIsInitializingData] = useState<boolean>(false);
@@ -41,6 +41,10 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          logout();
+          return;
+        }
         throw new Error('No se pudo inicializar la información base.');
       }
 

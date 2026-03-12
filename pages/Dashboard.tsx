@@ -1,25 +1,169 @@
-import React, { useState } from 'react';
-import { RefreshCw, Plus, DollarSign, ArrowUpRight, ArrowRight, MoreHorizontal, CalendarClock, CreditCard, AlertCircle, Package } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { RefreshCw, DollarSign, ArrowUpRight, ArrowRight, MoreHorizontal, CalendarClock, AlertCircle, Trash2, StickyNote, Loader2 } from 'lucide-react';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
+import { Dialog } from '../components/ui/Dialog';
 import { InsuranceSummary, Invoice } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { useAppData } from '../lib/AppDataContext';
+import { useAuth } from '../lib/AuthContext';
+import { ROUTES } from '../lib/routes';
 
-interface DashboardProps {
-    onNavigateToInvoice: (id: string) => void;
-}
+type DashboardNote = {
+    id: string;
+    detail: string;
+    user: string;
+};
 
-export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => {
-  const { appData } = useAppData();
+const mapNoteItem = (item: any): DashboardNote => ({
+    id: String(item?.id || ''),
+    detail: String(item?.Detalle_NE || item?.detalle_NE || '').trim(),
+    user: String(item?.Usuario_NE || item?.usuario_NE || '').trim() || 'Usuario',
+});
+
+export const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
+    const { appData } = useAppData();
+    const { token } = useAuth();
   const [activeTab, setActiveTab] = useState<'pending' | 'paid' | 'overdue'>('pending');
+    const [notes, setNotes] = useState<DashboardNote[]>([]);
+    const [newNote, setNewNote] = useState('');
+    const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
+    const [isNotesActionLoading, setIsNotesActionLoading] = useState(false);
+    const [notesLoadingMessage, setNotesLoadingMessage] = useState('Procesando notas...');
+    const [isSavingNote, setIsSavingNote] = useState(false);
+    const [deletingNoteId, setDeletingNoteId] = useState<string | null>(null);
 
-  if (!appData) return null;
+    const resumenFactura = appData?.resumenFactura || [];
+    const turnos = appData?.turnos || [];
+    const notasExpress = appData?.notasExpress || [];
 
-  const { resumenFactura, turnos } = appData;
+    const initialMappedNotes = useMemo(
+        () =>
+            (notasExpress || [])
+                .map(mapNoteItem)
+                .filter((note) => note.id && note.detail)
+                .sort((a, b) => Number(b.id) - Number(a.id)),
+        [notasExpress],
+    );
 
-  // 1. Cálculos de Facturación
+    useEffect(() => {
+        setNotes(initialMappedNotes);
+    }, [initialMappedNotes]);
+
+    const refreshNotes = useCallback(async () => {
+        if (!token) return;
+
+        const response = await fetch('/api/notes', {
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        });
+
+        const payload = await response.json();
+        if (!response.ok || !payload?.success || !Array.isArray(payload?.notes)) {
+            throw new Error(payload?.error || 'No se pudieron cargar las notas');
+        }
+
+        const mapped = payload.notes
+            .map(mapNoteItem)
+            .filter((note: DashboardNote) => note.id && note.detail)
+            .sort((a: DashboardNote, b: DashboardNote) => Number(b.id) - Number(a.id));
+
+        setNotes(mapped);
+    }, [token]);
+
+    const handleCreateNote = async () => {
+        const detail = newNote.trim();
+        if (!detail) return;
+        if (!token) {
+            alert('Tu sesion expiro. Volve a iniciar sesion.');
+            return;
+        }
+
+        try {
+            setNotesLoadingMessage('Guardando nota...');
+            setIsNotesActionLoading(true);
+            setIsSavingNote(true);
+            const response = await fetch('/api/notes', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({ detail }),
+            });
+
+            const payload = await response.json();
+            if (!response.ok || !payload?.success) {
+                throw new Error(payload?.error || 'No se pudo guardar la nota');
+            }
+
+            setNewNote('');
+            await refreshNotes();
+        } catch (error: any) {
+            console.error('Create note error:', error);
+            alert(error?.message || 'No se pudo crear la nota.');
+        } finally {
+            setIsSavingNote(false);
+            setIsNotesActionLoading(false);
+        }
+    };
+
+    const handleDeleteNote = async (id: string) => {
+        if (!id || !token) return;
+
+        try {
+            setNotesLoadingMessage('Eliminando nota...');
+            setIsNotesActionLoading(true);
+            setDeletingNoteId(id);
+
+            const response = await fetch(`/api/notes?id=${encodeURIComponent(id)}`, {
+                method: 'DELETE',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
+
+            const payload = await response.json();
+            if (!response.ok || !payload?.success) {
+                throw new Error(payload?.error || 'No se pudo eliminar la nota');
+            }
+
+            await refreshNotes();
+        } catch (error: any) {
+            console.error('Delete note error:', error);
+            alert(error?.message || 'No se pudo eliminar la nota.');
+        } finally {
+            setDeletingNoteId(null);
+            setIsNotesActionLoading(false);
+        }
+    };
+
+    const handleOpenNotesModal = async () => {
+        if (!token) {
+            alert('Tu sesion expiro. Volve a iniciar sesion.');
+            return;
+        }
+
+        try {
+            setNotesLoadingMessage('Cargando notas...');
+            setIsNotesActionLoading(true);
+            setIsNotesModalOpen(true);
+            await refreshNotes();
+        } catch (error: any) {
+            console.error('Open notes modal error:', error);
+            alert(error?.message || 'No se pudieron cargar las notas.');
+        } finally {
+            setIsNotesActionLoading(false);
+        }
+    };
+
+    if (!appData) return null;
+
+    // 1. Cálculos de Facturación
   // Sumamos todas las "Cobradas" que trajo el servidor (que ya vienen filtradas por los últimos 2 meses)
   const facturasCobradas = resumenFactura.filter(inv => {
     const status = (inv.Status_RF || inv.Status_x0020_RF || '').trim().toLowerCase();
@@ -97,8 +241,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => 
             <Button variant="outline" className="bg-white border-gray-200 text-gray-600 h-9 px-3 text-xs font-medium shadow-sm">
                 <RefreshCw className="w-3.5 h-3.5 mr-2" /> Actualizar
             </Button>
-            <Button className="bg-[#0a1f11] hover:bg-[#143d21] text-white h-9 px-4 text-xs font-bold rounded-lg shadow-sm">
-                <Plus className="w-3.5 h-3.5 mr-2" /> Nueva Operación
+            <Button className="bg-[#0a1f11] hover:bg-[#143d21] text-white h-9 px-4 text-xs font-bold rounded-lg shadow-sm" onClick={handleOpenNotesModal}>
+                <StickyNote className="w-3.5 h-3.5 mr-2" /> Ver Notas
             </Button>
           </div>
       </div>
@@ -202,7 +346,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => 
                         ) : filteredInvoices.slice(0, 8).map((inv, idx) => (
                             <tr 
                                 key={idx} 
-                                onClick={() => onNavigateToInvoice(inv.id)}
+                                onClick={() => navigate(ROUTES.invoices, { state: { invoiceId: inv.id } })}
                                 className="hover:bg-gray-50/80 transition-colors group cursor-pointer"
                             >
                                 <td className="px-5 py-3 text-gray-500 whitespace-nowrap text-xs font-medium font-mono">{inv.date}</td>
@@ -247,16 +391,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => 
             </div>
             
             <div className="p-2 border-t border-gray-100 bg-gray-50/30 flex justify-center">
-                <Button variant="ghost" size="sm" className="text-[10px] h-7 text-gray-500 hover:text-gray-900">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-[10px] h-7 text-gray-500 hover:text-gray-900"
+                  onClick={() => navigate(ROUTES.invoices)}
+                >
                     Ver todas las operaciones <ArrowRight className="w-3 h-3 ml-1" />
                 </Button>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Insurance Summary */}
+                {/* Right Column: Insurance Summary */}
         <div className="xl:col-span-1">
-           <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-full flex flex-col">
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-full flex flex-col">
               <div className="px-5 py-3 border-b border-gray-100 flex flex-col gap-0.5 bg-gray-50/30">
                  <div className="flex items-center justify-between">
                     <h3 className="font-bold text-gray-800 text-sm uppercase tracking-wide">Ranking</h3>
@@ -293,6 +442,86 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToInvoice }) => 
            </div>
         </div>
       </div>
+
+            <Dialog
+                open={isNotesModalOpen}
+                onOpenChange={setIsNotesModalOpen}
+                title="Notas"
+                className="max-w-2xl"
+            >
+                <div className="space-y-3">
+                    <div className="p-3.5 border border-gray-200 rounded-xl bg-gradient-to-b from-white to-gray-50/60 shadow-sm space-y-3">
+                        <label className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Nueva nota</label>
+                        <textarea
+                            value={newNote}
+                            onChange={(e) => setNewNote(e.target.value)}
+                            placeholder="Escribe una nota..."
+                            rows={3}
+                            className="w-full resize-none rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    if (!isSavingNote) {
+                                        handleCreateNote();
+                                    }
+                                }
+                            }}
+                        />
+                        <div className="flex items-center justify-between gap-3">
+                            <p className="text-[11px] text-gray-400">Enter para agregar, Shift+Enter para salto de linea</p>
+                            <Button
+                                className="h-10 px-4 text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:text-gray-500 rounded-lg shadow-sm"
+                                onClick={handleCreateNote}
+                                disabled={isSavingNote || !newNote.trim()}
+                            >
+                                {isSavingNote ? 'Guardando...' : 'Agregar nota'}
+                            </Button>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center justify-between px-1">
+                        <p className="text-xs text-gray-500">{notes.length} notas activas</p>
+                    </div>
+
+                    <div className="max-h-[420px] overflow-y-auto space-y-2 custom-scrollbar pr-1">
+                        {notes.length === 0 ? (
+                            <div className="px-3 py-8 text-center text-xs text-gray-400 italic border border-dashed border-gray-200 rounded-lg">
+                                No hay notas cargadas.
+                            </div>
+                        ) : (
+                            notes.map((note) => (
+                                <div key={note.id} className="group rounded-lg border border-gray-100 bg-gray-50/60 px-3 py-2.5">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-medium text-gray-800 whitespace-pre-wrap break-words">{note.detail}</p>
+                                            <p className="text-[11px] text-gray-400 mt-1">{note.user}</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="mt-0.5 text-gray-300 hover:text-red-500 transition-colors"
+                                            onClick={() => handleDeleteNote(note.id)}
+                                            disabled={deletingNoteId === note.id}
+                                            title="Eliminar nota"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            </Dialog>
+
+            {isNotesActionLoading && (
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-[2px] transition-all duration-200">
+                    <div className="bg-white/95 p-6 rounded-2xl shadow-2xl flex flex-col items-center max-w-[260px] w-full mx-4 border border-white/20">
+                        <Loader2 className="w-8 h-8 text-[#113123] animate-spin mb-3" />
+                        <h2 className="text-[#113123] text-lg font-bold mb-1 tracking-tight">Procesando</h2>
+                        <p className="text-gray-600 text-[11px] text-center leading-relaxed">{notesLoadingMessage}</p>
+                    </div>
+                </div>
+            )}
     </div>
   );
 };

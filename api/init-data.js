@@ -1,15 +1,6 @@
-import { ConfidentialClientApplication } from "@azure/msal-node";
-import { Client } from "@microsoft/microsoft-graph-client";
 import jwt from "jsonwebtoken";
-
-const LIST_IDS = {
-    notasExpress: "2a449ffb-d7f9-42b3-a2e5-84798b17d3b9", // 17.NotasExpress
-    tipoFactura: "e7b853f1-3aaa-4940-899a-ced8244318b2", // 99.ABM_TipoFactura
-    seguros: "a9906d50-6ab2-4228-97f9-3d0367544a37", // 99.ABM_Seguros
-    resumenFactura: "e691aa5d-1f3f-4597-a81a-0fb2af9c7fb5", // 01.ResumenFactura
-    tipoStock: "f6f9feb4-422f-4c1f-abd3-357d3fd5d57e", // 99.ABM_TipoStock
-    turnos: "968056ca-f6b4-47cc-9cc9-384d76da7c9c", // 15.Turnos
-};
+import { getGraphClient, getSiteId, getJwtSecret, fetchAllListItems } from "./lib/graph-client.js";
+import { LIST_IDS } from "./lib/constants.js";
 
 export default async function handler(req, res) {
     if (req.method !== "GET") {
@@ -22,120 +13,99 @@ export default async function handler(req, res) {
     }
 
     const token = authorization.split(" ")[1];
-    let decodedToken;
     try {
-        const jwtSecret = process.env.JWT_SECRET || "fallback_secret_for_local_dev_only";
-        decodedToken = jwt.verify(token, jwtSecret);
+        jwt.verify(token, getJwtSecret());
     } catch (err) {
         return res.status(401).json({ error: "Invalid or expired token" });
     }
 
-    const username = decodedToken.username;
-
-    const SITE_ID = process.env.GRAPH_SITE_ID;
-    if (!SITE_ID) {
-        return res.status(500).json({ error: "Server Configuration Error" });
-    }
-
     try {
-        const msalConfig = {
-            auth: {
-                clientId: process.env.GRAPH_CLIENT_ID,
-                authority: `https://login.microsoftonline.com/${process.env.GRAPH_TENANT_ID}`,
-                clientSecret: process.env.GRAPH_CLIENT_SECRET,
-            },
-        };
-        const cca = new ConfidentialClientApplication(msalConfig);
-        const authResponse = await cca.acquireTokenByClientCredential({
-            scopes: ["https://graph.microsoft.com/.default"],
-        });
-
-        const client = Client.init({
-            authProvider: (done) => done(null, authResponse.accessToken),
-        });
+        const siteId = getSiteId();
+        const client = await getGraphClient();
 
         const now = new Date();
-        const currentMonthYear = `${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
-        const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const prevMonthYear = `${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}/${lastMonthDate.getFullYear()}`;
+        const toMonthYear = (date) => `${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+        const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const targetMonthYears = new Set([toMonthYear(now), toMonthYear(prevMonthDate)]);
 
-        // Helper para hacer fetch de listas con paginación (para traer TODO de una lista)
-        const fetchAllItems = async (listId) => {
-            let items = [];
-            let url = `/sites/${SITE_ID}/lists/${listId}/items?$expand=fields&$top=999`;
-            let response = await client.api(url).header('Prefer', 'HonorNonIndexedQueriesWarningMayFailRandomly').get();
-            items = items.concat(response.value);
-            
-            while (response["@odata.nextLink"]) {
-                response = await client.api(response["@odata.nextLink"]).get();
-                items = items.concat(response.value);
-            }
-            return items.map(item => ({ ...item.fields, id: item.id }));
+        const normalizeMonthYear = (value) => {
+            if (typeof value !== "string") return null;
+            const trimmed = value.trim();
+            const match = trimmed.match(/^(\d{1,2})\s*\/\s*(\d{4})$/);
+            if (!match) return null;
+            const month = match[1].padStart(2, "0");
+            return `${month}/${match[2]}`;
         };
 
-        // Fetch en paralelo de todas las listas
-        console.log("Fetching SharePoint data...");
+        const getInvoiceMonthYear = (invoice) => {
+            const preferredKeys = [
+                "FechaMesAno_RF",
+                "FechaMesAno",
+                "Fecha_x0020_Mes_x002f_A_x00f1_o_RF",
+                "Fecha_x0020_Mes_x002f_A_x00f1_o",
+            ];
+
+            for (const key of preferredKeys) {
+                const normalized = normalizeMonthYear(invoice[key]);
+                if (normalized) return normalized;
+            }
+
+            // Fallback for unexpected SharePoint internal names.
+            for (const value of Object.values(invoice)) {
+                const normalized = normalizeMonthYear(value);
+                if (normalized) return normalized;
+            }
+
+            return null;
+        };
+
+        const fetchList = (listId) => fetchAllListItems(client, siteId, listId);
+
         const results = await Promise.all([
             fetchList(LIST_IDS.notasExpress),
             fetchList(LIST_IDS.tipoFactura),
             fetchList(LIST_IDS.seguros),
-            fetchAllItems(LIST_IDS.resumenFactura), // Traemos todas para no errar con filtros históricos
+            fetchList(LIST_IDS.resumenFactura),
             fetchList(LIST_IDS.tipoStock),
-            fetchList(LIST_IDS.turnos)
+            fetchList(LIST_IDS.turnos),
         ]);
         
         const [allNotas, allTipoFacturas, allSeguros, allResumen, allTipoStock, allTurnos] = results;
 
-        console.log(`Data fetched (Filtered): 
-            Notas: ${allNotas.length}
-            Tipos: ${allTipoFacturas.length}
-            Seguros: ${allSeguros.length}
-            Resumen (Filtered): ${allResumen.length}
-            Stock: ${allTipoStock.length}
-            Turnos: ${allTurnos.length}
-        `);
+        // Filter active items (SharePoint uses either Status_XX or Status_x0020_XX field names)
+        const isActive = (item, suffix) =>
+            item[`Status_${suffix}`] === "Activo" || item[`Status_x0020_${suffix}`] === "Activo";
 
-        // ============================================
-        // APLICAR LOS "FILTROS" (En JS para el resto de las listas)
-        // ============================================
+        const notasExpress = allNotas.filter(i => isActive(i, "NE"));
 
-        const notasExpress = allNotas.filter(i => i.Status_NE === "Activo" || i.Status_x0020_NE === "Activo");
-        
         const tipoFactura = allTipoFacturas
-            .filter(i => i.Status_AT === "Activo" || i.Status_x0020_AT === "Activo")
+            .filter(i => isActive(i, "AT"))
             .sort((a, b) => (a.Order_AT || 0) - (b.Order_AT || 0));
 
-        const seguros = allSeguros.filter(i => i.Status_AS === "Activo" || i.Status_x0020_AS === "Activo");
+        const seguros = allSeguros.filter(i => isActive(i, "AS"));
 
-        // Resumen Factura: Lógica optimizada
-        // - Todas las Pendientes y Vencidas (Historia completa para Ctas Ctes)
-        // - Cobradas y Anuladas solo de los últimos 2 meses (Para métricas y movimientos recientes)
-        const resumenFactura = allResumen.filter(inv => {
-            const status = (inv.Status_RF || inv.Status_x0020_RF || "").trim().toLowerCase();
-            const month = (inv.FechaMesAno_RF || "").trim();
-            const isHistoricalNeeded = status.includes("pendiente") || status.includes("vencida");
-            const isRecentNeeded = (status.includes("cobrada") || status.includes("anulada")) && 
-                                 (month === currentMonthYear || month === prevMonthYear);
-            
-            return isHistoricalNeeded || isRecentNeeded;
-        }).sort((a, b) => parseInt(b.id) - parseInt(a.id)); // ID Descending
+        // Resumen Factura: only current month and previous month (field is text MM/YYYY).
+        const resumenFactura = allResumen
+            .filter(inv => {
+                const invoiceMonthYear = getInvoiceMonthYear(inv);
+                return invoiceMonthYear ? targetMonthYears.has(invoiceMonthYear) : false;
+            })
+            .sort((a, b) => parseInt(b.id) - parseInt(a.id));
 
-        const tipoStock = allTipoStock.filter(i => i.Status_ATS === "Activo" || i.Status_x0020_ATS === "Activo");
+        const tipoStock = allTipoStock.filter(i => isActive(i, "ATS"));
 
-        // Turnos de hoy: formato "dd/mm/yyyy" - Usamos Fecha_T que es el campo real
+        // Today's appointments (dd/mm/yyyy)
         const todayStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
         const turnos = allTurnos.filter(i => i.Fecha_T === todayStr || i.Fecha_x0020_T === todayStr);
 
-        // Generamos SemanaAux = "yyyy" & WeekNum
+        // Week identifier: "yyyyWW"
         const getWeekNumber = (d) => {
-            d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-            d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-            var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-            var weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-            return weekNo;
-        }
-        const currentYear = now.getFullYear(); // Define currentYear before using it
-        const semanaAux = `${currentYear}${getWeekNumber(now)}`;
+            const utc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+            utc.setUTCDate(utc.getUTCDate() + 4 - (utc.getUTCDay() || 7));
+            const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+            return Math.ceil(((utc - yearStart) / 86400000 + 1) / 7);
+        };
+        const semanaAux = `${now.getFullYear()}${getWeekNumber(now)}`;
 
         return res.status(200).json({
             success: true,
@@ -149,7 +119,7 @@ export default async function handler(req, res) {
         });
 
     } catch (error) {
-        console.error("Init Data Error:", error);
-        return res.status(500).json({ error: "Falló la inicialización de datos", details: error.message });
+        console.error("Init Data Error:", error.message);
+        return res.status(500).json({ error: "Falló la inicialización de datos" });
     }
 }

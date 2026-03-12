@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View } from './types';
+import React from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
 import { Dashboard } from './pages/Dashboard';
@@ -9,39 +9,25 @@ import { Appointments } from './pages/Appointments';
 import { Accounts } from './pages/Accounts';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { AppDataProvider, useAppData } from './lib/AppDataContext';
-import { Loader2 } from 'lucide-react'; // Using Lucide for the spinner
+import { ROUTES } from './lib/routes';
+import { Loader2 } from 'lucide-react';
 
-function MainApp() {
-  const [currentView, setCurrentView] = useState<View>('dashboard');
-  const { isAuthenticated } = useAuth();
+const ComingSoon = () => (
+  <div className="flex flex-col items-center justify-center h-full text-gray-500">
+    <h2 className="text-2xl font-bold mb-2">Próximamente</h2>
+    <p>Esta sección se encuentra en desarrollo.</p>
+  </div>
+);
+
+const ModuleDisabled = () => (
+  <div className="flex flex-col items-center justify-center h-full text-gray-500">
+    <h2 className="text-2xl font-bold mb-2">Módulo deshabilitado</h2>
+    <p>Esta sección está temporalmente fuera de servicio.</p>
+  </div>
+);
+
+function AuthenticatedApp() {
   const { isInitializingData, errorInitializing } = useAppData();
-  
-  // Estado para manejar la navegación directa a una factura
-  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
-
-  // Forzar vuelta al dashboard al logearse
-  React.useEffect(() => {
-    if (isAuthenticated) {
-        setCurrentView('dashboard');
-    }
-  }, [isAuthenticated]);
-
-  const handleNavigate = (view: View) => {
-    // Limpiamos la selección si cambiamos de vista manualmente
-    if (view !== 'invoices') {
-        setSelectedInvoiceId(null);
-    }
-    setCurrentView(view);
-  };
-
-  const handleNavigateToInvoice = (id: string) => {
-    setSelectedInvoiceId(id);
-    setCurrentView('invoices');
-  };
-
-  if (!isAuthenticated) {
-    return <Login />;
-  }
 
   return (
     <div className="relative min-h-screen">
@@ -73,40 +59,50 @@ function MainApp() {
           </div>
         </div>
       ) : (
-        <Layout currentView={currentView} onNavigate={handleNavigate}>
-      {currentView === 'dashboard' && (
-        <Dashboard onNavigateToInvoice={handleNavigateToInvoice} />
-      )}
-      {currentView === 'invoices' && (
-        <Invoices 
-            initialInvoiceId={selectedInvoiceId} 
-            onClearSelection={() => setSelectedInvoiceId(null)}
-        />
-      )}
-      {currentView === 'inventory' && <Inventory />}
-      {currentView === 'appointments' && <Appointments />}
-      {currentView === 'accounts' && <Accounts />}
-      
-      {(currentView === 'reports' || currentView === 'stock-reports' || currentView === 'abm') && (
-        <div className="flex flex-col items-center justify-center h-full text-gray-500">
-           <h2 className="text-2xl font-bold mb-2">Próximamente</h2>
-           <p>Esta sección se encuentra en desarrollo.</p>
-        </div>
-      )}
-      </Layout>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route index element={<Navigate to={ROUTES.dashboard} replace />} />
+            <Route path={ROUTES.dashboard} element={<Dashboard />} />
+            <Route path={ROUTES.invoices} element={<Invoices />} />
+            <Route path={ROUTES.inventory} element={<ModuleDisabled />} />
+            <Route path={ROUTES.appointments} element={<Appointments />} />
+            <Route path={ROUTES.accounts} element={<ModuleDisabled />} />
+            <Route path={ROUTES.reports} element={<ModuleDisabled />} />
+            <Route path={ROUTES.stockReports} element={<ModuleDisabled />} />
+            <Route path={ROUTES.settings} element={<ModuleDisabled />} />
+            <Route path="*" element={<Navigate to={ROUTES.dashboard} replace />} />
+          </Route>
+        </Routes>
       )}
     </div>
   );
+}
+
+function AppRoutes() {
+  const { isAuthenticated } = useAuth();
+
+  if (!isAuthenticated) {
+    return (
+      <Routes>
+        <Route path={ROUTES.login} element={<Login />} />
+        <Route path="*" element={<Navigate to={ROUTES.login} replace />} />
+      </Routes>
+    );
+  }
+
+  return <AuthenticatedApp />;
 }
 
 function App() {
   return (
     <AuthProvider>
       <AppDataProvider>
-        <MainApp />
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
       </AppDataProvider>
     </AuthProvider>
   );
 }
 
-export default App;
+export default App;
