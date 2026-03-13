@@ -2,6 +2,8 @@ import jwt from "jsonwebtoken";
 import { getGraphClient, getSiteId, getJwtSecret, fetchAllListItems } from "./lib/graph-client.js";
 import { LIST_IDS } from "./lib/constants.js";
 
+const PROVIDER_ATTACHMENTS_FOLDER = "CuentaCorrienteAdjuntos";
+
 const round2 = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
 const normalizeText = (value) =>
@@ -86,6 +88,54 @@ const toComparableInvoice = (value) => {
   return digits || raw.toLowerCase();
 };
 
+const parseCancelledInvoiceNumbers = (value) =>
+  String(value || "")
+    .split(" - ")
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+
+const dedupeInvoiceNumbers = (values) => {
+  const deduped = new Map();
+  (Array.isArray(values) ? values : []).forEach((invoice) => {
+    const raw = String(invoice || "").trim();
+    if (!raw) return;
+    const comparable = toComparableInvoice(raw);
+    if (!comparable || deduped.has(comparable)) return;
+    deduped.set(comparable, raw);
+  });
+  return Array.from(deduped.values());
+};
+
+const isCreditNoteType = (value) => normalizeText(value) === "nota de credito";
+
+const resolveCancelledInvoicesForPayment = ({
+  provider,
+  type,
+  invoiceNumber,
+  cancelledInvoiceNumbers,
+  movements,
+}) => {
+  const manual = dedupeInvoiceNumbers(cancelledInvoiceNumbers);
+  if (!isCreditNoteType(type)) return manual;
+  if (manual.length > 0) return manual;
+
+  const comparableTarget = toComparableInvoice(invoiceNumber);
+  if (!comparableTarget) return manual;
+
+  const normalizedProvider = normalizeText(provider);
+  const autoMatched = movements
+    .filter((movement) => {
+      if (normalizeText(getProviderFromMovement(movement)) !== normalizedProvider) return false;
+      if (isMovementDeleted(movement)) return false;
+      if (parseAmount(fieldValue(movement, ["MontoTotal_FP"], 0)) <= 0) return false;
+      if (normalizeText(getMovementStatus(movement)) !== "pendiente") return false;
+      return toComparableInvoice(getMovementInvoiceNumber(movement)) === comparableTarget;
+    })
+    .map((movement) => getMovementInvoiceNumber(movement));
+
+  return dedupeInvoiceNumbers([...manual, ...autoMatched]);
+};
+
 const monthYearSetLastN = (n) => {
   const result = new Set();
   const now = new Date();
@@ -115,6 +165,81 @@ async function fetchAccounts(client, siteId) {
 
 async function fetchMovements(client, siteId) {
   return fetchAllListItems(client, siteId, LIST_IDS.facturaProveedores);
+}
+
+async function fetchProviderDocuments(client, siteId) {
+  return fetchAllListItems(client, siteId, LIST_IDS.fotoFacturaProveedores);
+}
+
+const sanitizePathSegment = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/[\\/:*?"<>|#%{}~&+]/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 180);
+
+const docDrivePath = (docId) => {
+  const safe = sanitizePathSegment(docId);
+  if (!safe) return "";
+  return `${PROVIDER_ATTACHMENTS_FOLDER}/${safe}`;
+};
+
+const parseDataUrlPayload = (dataUrl) => {
+  const raw = String(dataUrl || "").trim();
+  const match = raw.match(/^data:([^;,]+);base64,(.+)$/i);
+  if (!match) return null;
+  return {
+    mimeType: String(match[1] || "application/octet-stream").toLowerCase(),
+    buffer: Buffer.from(match[2], "base64"),
+  };
+};
+
+async function uploadProviderDocumentToDrive(client, siteId, payload) {
+  const docId = String(payload?.docId || "").trim();
+  const fileDataUrl = String(payload?.attachmentDataUrl || "").trim();
+  if (!docId || !fileDataUrl) return;
+
+  const parsed = parseDataUrlPayload(fileDataUrl);
+  if (!parsed || !parsed.buffer?.length) return;
+
+  const path = docDrivePath(docId);
+  if (!path) return;
+
+  await client
+    .api(`/sites/${siteId}/drive/root:/${path}:/content`)
+    .header("Content-Type", parsed.mimeType || "application/octet-stream")
+    .put(parsed.buffer);
+}
+
+async function fetchProviderDocumentFromDrive(client, siteId, docId) {
+  const path = docDrivePath(docId);
+  if (!path) return null;
+
+  try {
+    const driveItem = await client.api(`/sites/${siteId}/drive/root:/${path}`).get();
+    const downloadUrl = driveItem?.["@microsoft.graph.downloadUrl"];
+    if (!downloadUrl) return null;
+
+    const response = await fetch(downloadUrl);
+    if (!response.ok) return null;
+
+    const mimeType = String(
+      response.headers.get("content-type") || driveItem?.file?.mimeType || "application/octet-stream",
+    ).toLowerCase();
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const dataUrl = `data:${mimeType};base64,${bytes.toString("base64")}`;
+
+    return {
+      attachmentDataUrl: dataUrl,
+      attachmentMimeType: mimeType,
+      attachmentName: String(driveItem?.name || docId || "adjunto").trim(),
+    };
+  } catch (error) {
+    if (Number(error?.statusCode) === 404) return null;
+    throw error;
+  }
 }
 
 const computeLedgerForProvider = (movements, providerName) => {
@@ -213,16 +338,27 @@ async function recomputeAndPersistProvider(client, siteId, providerName) {
   return summary;
 }
 
-const mapMovementForUi = (ledgerRow) => {
+const dataUrlMimeType = (value) => {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^data:([^;,]+)[;,]/i);
+  return match?.[1] || "";
+};
+
+const mapMovementForUi = (ledgerRow, attachmentsByDocId = new Map()) => {
   const { movement, amount, deleted, balancePre, balancePost, runningDebt, runningCredit } = ledgerRow;
   const status = getMovementStatus(movement);
+  const docId = String(fieldValue(movement, ["IDAux_FP"], "")).trim();
+  const attachmentDataUrl = docId ? String(attachmentsByDocId.get(docId) || "") : "";
+  const mimeType = dataUrlMimeType(attachmentDataUrl);
+  const inferredExtension = mimeType.includes("pdf") ? "pdf" : (mimeType.split("/")[1] || "jpg");
+  const invoiceNumber = getMovementInvoiceNumber(movement);
 
   return {
     id: String(movement.id),
     provider: getProviderFromMovement(movement),
     date: fieldValue(movement, ["Fecha_FP"], toDdMmYyyy(parseDateFlexible(movement))),
     monthYear: getMonthYearFromMovement(movement),
-    invoiceNumber: getMovementInvoiceNumber(movement),
+    invoiceNumber,
     cancelledInvoiceNumber: String(fieldValue(movement, ["NroFacturaCancelada_FP"], "")).trim(),
     type: String(fieldValue(movement, ["Tipo_FP"], amount < 0 ? "Pago" : "Compra")).trim(),
     status,
@@ -233,12 +369,19 @@ const mapMovementForUi = (ledgerRow) => {
     debtRunning: runningDebt,
     creditRunning: runningCredit,
     description: String(fieldValue(movement, ["Observaciones_FP", "Observaciones"], "")).trim(),
-    docId: String(fieldValue(movement, ["IDAux_FP"], "")).trim(),
+    docId,
+    hasAttachment: Boolean(attachmentDataUrl),
+    attachmentDataUrl,
+    attachmentMimeType: mimeType,
+    attachmentName: attachmentDataUrl ? `${invoiceNumber || docId || "adjunto"}.${inferredExtension}` : "",
   };
 };
 
 async function getProvidersSummary(client, siteId) {
-  const [accounts, movements] = await Promise.all([fetchAccounts(client, siteId), fetchMovements(client, siteId)]);
+  const [accounts, movements] = await Promise.all([
+    fetchAccounts(client, siteId),
+    fetchMovements(client, siteId),
+  ]);
 
   const activeAccounts = accounts.filter((acc) => {
     const status = normalizeText(fieldValue(acc, ["Status_CC", "Status"], "Activo"));
@@ -287,15 +430,43 @@ async function getProviderDetail(client, siteId, providerName) {
     throw new Error("Proveedor inválido");
   }
 
-  const [accounts, movements] = await Promise.all([fetchAccounts(client, siteId), fetchMovements(client, siteId)]);
+  const [accounts, movements, documents] = await Promise.all([
+    fetchAccounts(client, siteId),
+    fetchMovements(client, siteId),
+    fetchProviderDocuments(client, siteId),
+  ]);
 
   const account = accounts.find((acc) => normalizeText(getProviderFromAccount(acc)) === normalizeText(provider));
   const effectiveProvider = account ? getProviderFromAccount(account) : provider;
 
   const { ledger, summary } = computeLedgerForProvider(movements, effectiveProvider);
 
+  const docIds = new Set(
+    ledger
+      .map((entry) => String(fieldValue(entry.movement, ["IDAux_FP"], "")).trim())
+      .filter(Boolean),
+  );
+
+  const attachmentsByDocId = new Map();
+  documents.forEach((documentItem) => {
+    const attachmentDocId = String(fieldValue(documentItem, ["IDFacturaProveedor_FP"], "")).trim();
+    if (!attachmentDocId || !docIds.has(attachmentDocId)) return;
+
+    const dataUrl = String(fieldValue(documentItem, ["FotoFactura_FP"], "")).trim();
+    if (!dataUrl) return;
+
+    const current = attachmentsByDocId.get(attachmentDocId);
+    if (!current || Number(documentItem.id) > Number(current.id)) {
+      attachmentsByDocId.set(attachmentDocId, { id: documentItem.id, dataUrl });
+    }
+  });
+
+  const dataUrlByDocId = new Map(
+    Array.from(attachmentsByDocId.entries()).map(([docId, value]) => [docId, value.dataUrl]),
+  );
+
   const uiMovements = ledger
-    .map(mapMovementForUi)
+    .map((row) => mapMovementForUi(row, dataUrlByDocId))
     .sort((a, b) => {
       const da = parseDateFlexible({ Fecha_FP: a.date, FechaDateValue_FP: null }).getTime();
       const db = parseDateFlexible({ Fecha_FP: b.date, FechaDateValue_FP: null }).getTime();
@@ -320,18 +491,7 @@ async function getProviderDetail(client, siteId, providerName) {
 }
 
 async function attachProviderDocument(client, siteId, payload) {
-  const fileDataUrl = String(payload?.attachmentDataUrl || "").trim();
-  const docId = String(payload?.docId || "").trim();
-  if (!fileDataUrl || !docId) return;
-
-  const docType = fileDataUrl.toLowerCase().startsWith("data:application/pdf") ? "pdf" : "jpeg";
-
-  await createListItem(client, siteId, LIST_IDS.fotoFacturaProveedores, {
-    Title: "boutique",
-    FotoFactura_FP: fileDataUrl,
-    IDFacturaProveedor_FP: docId,
-    DocType_FP: docType,
-  });
+  await uploadProviderDocumentToDrive(client, siteId, payload);
 }
 
 async function setInvoicesStatusByNumbers(client, siteId, providerName, invoiceNumbers, status) {
@@ -403,13 +563,22 @@ async function createMovement(client, siteId, reqBody, userName) {
   const docId = `${provider.slice(0, 3)} - ${dateText} - ${String(Date.now()).slice(-6)}`;
 
   const amount = isPayment ? round2(amountRaw * -1) : round2(amountRaw);
+  const effectiveCancelledInvoiceNumbers = isPayment
+    ? resolveCancelledInvoicesForPayment({
+        provider,
+        type,
+        invoiceNumber,
+        cancelledInvoiceNumbers,
+        movements,
+      })
+    : [];
 
   const movementFields = {
     Title: "boutique",
     IDAux_FP: docId,
     BalancePostFactura_FP: 0,
     BalancePreFactura_FP: 0,
-    NroFacturaCancelada_FP: cancelledInvoiceNumbers.join(" - "),
+    NroFacturaCancelada_FP: effectiveCancelledInvoiceNumbers.join(" - "),
     NroFactura_FP: invoiceNumber || " - ",
     Proveedor_FP: provider,
     MontoTotal_FP: amount,
@@ -427,8 +596,8 @@ async function createMovement(client, siteId, reqBody, userName) {
 
   await createListItem(client, siteId, LIST_IDS.facturaProveedores, movementFields);
 
-  if (isPayment && cancelledInvoiceNumbers.length > 0) {
-    await setInvoicesStatusByNumbers(client, siteId, provider, cancelledInvoiceNumbers, "Cancelada");
+  if (isPayment && effectiveCancelledInvoiceNumbers.length > 0) {
+    await setInvoicesStatusByNumbers(client, siteId, provider, effectiveCancelledInvoiceNumbers, "Cancelada");
   }
 
   await attachProviderDocument(client, siteId, {
@@ -450,8 +619,66 @@ async function updateMovement(client, siteId, reqBody) {
 
   const movement = { ...(movementItemResponse.fields || {}), id: movementItemResponse.id };
   const provider = getProviderFromMovement(movement);
+  const currentStatus = normalizeText(getMovementStatus(movement));
+  const currentAmount = parseAmount(fieldValue(movement, ["MontoTotal_FP"], 0));
+  const isPaymentMovement = currentAmount < 0;
+  const currentType = String(fieldValue(movement, ["Tipo_FP"], currentAmount < 0 ? "Pago" : "Deuda")).trim();
+  const currentInvoiceNumber = String(fieldValue(movement, ["NroFactura_FP"], "")).trim();
+  const previousCancelledInvoiceNumbers = parseCancelledInvoiceNumbers(
+    fieldValue(movement, ["NroFacturaCancelada_FP"], ""),
+  );
+
+  if (currentStatus === "cancelada") {
+    const hasNonStatusEdits = [
+      "date",
+      "amount",
+      "invoiceNumber",
+      "type",
+      "observation",
+      "cancelledInvoiceNumbers",
+      "attachmentDataUrl",
+    ].some((key) => reqBody?.[key] !== undefined);
+
+    const requestedStatus = reqBody?.status !== undefined ? normalizeText(reqBody.status) : "";
+    const isValidRevert = requestedStatus === "pendiente";
+
+    if (hasNonStatusEdits || !isValidRevert) {
+      const err = new Error("Las facturas canceladas no se pueden editar. Solo se pueden revertir a Pendiente.");
+      err.statusCode = 409;
+      throw err;
+    }
+  }
 
   const fields = {};
+  const shouldReevaluateCancelledInvoices =
+    isPaymentMovement &&
+    (reqBody?.cancelledInvoiceNumbers !== undefined || reqBody?.type !== undefined || reqBody?.invoiceNumber !== undefined);
+
+  let nextCancelledInvoiceNumbers = [...previousCancelledInvoiceNumbers];
+
+  if (shouldReevaluateCancelledInvoices) {
+    const movements = await fetchMovements(client, siteId);
+    const requestedCancelledInvoiceNumbers =
+      reqBody?.cancelledInvoiceNumbers !== undefined
+        ? Array.isArray(reqBody.cancelledInvoiceNumbers)
+          ? reqBody.cancelledInvoiceNumbers.map((n) => String(n || "")).filter(Boolean)
+          : []
+        : previousCancelledInvoiceNumbers;
+
+    const nextType = reqBody?.type !== undefined ? String(reqBody.type || "").trim() : currentType;
+    const nextInvoiceNumber =
+      reqBody?.invoiceNumber !== undefined ? String(reqBody.invoiceNumber || "").trim() : currentInvoiceNumber;
+
+    nextCancelledInvoiceNumbers = resolveCancelledInvoicesForPayment({
+      provider,
+      type: nextType,
+      invoiceNumber: nextInvoiceNumber,
+      cancelledInvoiceNumbers: requestedCancelledInvoiceNumbers,
+      movements,
+    });
+
+    fields.NroFacturaCancelada_FP = nextCancelledInvoiceNumbers.join(" - ");
+  }
 
   if (reqBody?.date) {
     const d = new Date(reqBody.date);
@@ -485,15 +712,24 @@ async function updateMovement(client, siteId, reqBody) {
     fields.Status_FP = String(reqBody.status || "Pendiente").trim();
   }
 
-  if (reqBody?.cancelledInvoiceNumbers !== undefined) {
-    const values = Array.isArray(reqBody.cancelledInvoiceNumbers)
-      ? reqBody.cancelledInvoiceNumbers.map((n) => String(n).trim()).filter(Boolean)
-      : [];
-    fields.NroFacturaCancelada_FP = values.join(" - ");
-  }
-
   if (Object.keys(fields).length > 0) {
     await updateListItemFields(client, siteId, LIST_IDS.facturaProveedores, movementId, fields);
+  }
+
+  if (shouldReevaluateCancelledInvoices) {
+    const previousSet = new Set(previousCancelledInvoiceNumbers.map((inv) => toComparableInvoice(inv)).filter(Boolean));
+    const nextSet = new Set(nextCancelledInvoiceNumbers.map((inv) => toComparableInvoice(inv)).filter(Boolean));
+
+    const removed = previousCancelledInvoiceNumbers.filter((inv) => !nextSet.has(toComparableInvoice(inv)));
+    const added = nextCancelledInvoiceNumbers.filter((inv) => !previousSet.has(toComparableInvoice(inv)));
+
+    if (removed.length > 0) {
+      await setInvoicesStatusByNumbers(client, siteId, provider, removed, "Pendiente");
+    }
+
+    if (added.length > 0) {
+      await setInvoicesStatusByNumbers(client, siteId, provider, added, "Cancelada");
+    }
   }
 
   if (reqBody?.attachmentDataUrl) {
@@ -560,6 +796,16 @@ export default async function handler(req, res) {
       if (action === "update") {
         const result = await updateMovement(client, siteId, req.body);
         return res.status(200).json({ success: true, ...result });
+      }
+
+      if (action === "getattachment") {
+        const docId = String(req.body?.docId || "").trim();
+        if (!docId) {
+          return res.status(400).json({ error: "Falta docId" });
+        }
+
+        const document = await fetchProviderDocumentFromDrive(client, siteId, docId);
+        return res.status(200).json({ success: true, found: Boolean(document), ...(document || {}) });
       }
 
       if (action === "delete") {

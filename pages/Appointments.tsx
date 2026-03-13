@@ -675,8 +675,8 @@ export const Appointments: React.FC = () => {
       <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="pl-1">
-            <h2 className="text-[34px] leading-none font-extrabold tracking-tight text-slate-800">Turnos</h2>
-            <p className="mt-1 text-sm font-medium text-slate-500">
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight leading-none">Turnos</h1>
+            <p className="text-xs text-slate-500 mt-1.5 font-medium">
               Vista de agenda · {appointments.length} turnos en {groupedAppointments.length} dias
             </p>
           </div>
@@ -891,7 +891,7 @@ export const Appointments: React.FC = () => {
         <div className="flex min-w-max items-start gap-4 pb-2 h-full">
           {groupedAppointments.map((group) => (
             <div key={group.key} className="flex w-[336px] flex-shrink-0 flex-col gap-2 h-full">
-              <div className="rounded-xl border border-slate-200/80 bg-white/90 px-3 py-2 text-[20px] font-extrabold text-slate-700 tracking-tight shadow-[0_8px_20px_-18px_rgba(15,23,42,0.7)] backdrop-blur-sm">
+              <div className="rounded-xl border border-slate-200/80 bg-white/90 px-3 py-2 text-[20px] font-bold text-slate-700 tracking-tight shadow-[0_8px_20px_-18px_rgba(15,23,42,0.7)] backdrop-blur-sm">
                 {group.title}
                 <div className="mt-1 h-[2px] w-12 rounded-full bg-gradient-to-r from-[#114a28] to-emerald-400/70" />
               </div>
@@ -972,7 +972,7 @@ export const Appointments: React.FC = () => {
                       </div>
                     </div>
 
-                    <p className="relative z-[1] mb-1.5 font-extrabold text-[13px] leading-tight tracking-tight text-slate-900">
+                    <p className="relative z-[1] mb-1.5 font-bold font-mono text-[13px] leading-tight tracking-tight text-slate-900">
                       {appointment.time}
                       {appointment.timeEnd ? ` / ${appointment.timeEnd}` : ''}
                       {' - '}
@@ -983,7 +983,7 @@ export const Appointments: React.FC = () => {
                       Cliente: <span className="font-semibold text-slate-900">{appointment.client || '-'}</span>
                     </p>
                     <p className="relative z-[1] mb-0.5 text-slate-500 leading-tight">
-                      Telefono: <span className="font-semibold text-slate-900">{appointment.phone || '-'}</span>
+                      Telefono: <span className="font-semibold font-mono text-slate-900">{appointment.phone || '-'}</span>
                     </p>
                     <p className="relative z-[1] mb-0.5 text-slate-500 leading-tight">
                       Seguro: <span className="font-semibold text-slate-900">{appointment.insurance || '-'}</span>
@@ -1324,7 +1324,7 @@ export const Appointments: React.FC = () => {
                 Auto: <span className="font-semibold text-slate-900">{selectedForFinish?.car || '-'}</span>
               </p>
               <p className="truncate">
-                Patente: <span className="font-semibold text-slate-900">{selectedForFinish?.licensePlate || '-'}</span>
+                Patente: <span className="font-semibold font-mono text-slate-900">{selectedForFinish?.licensePlate || '-'}</span>
               </p>
               <p className="truncate sm:col-span-2">
                 Cliente: <span className="font-semibold text-slate-900">{selectedForFinish?.client || '-'}</span>
@@ -1383,7 +1383,7 @@ export const Appointments: React.FC = () => {
         className="max-w-md"
       >
         <p className="text-base text-slate-700 mb-2">Se va a marcar este turno como eliminado.</p>
-        <p className="text-sm text-slate-500 mb-5">Auto: <span className="font-semibold text-slate-700">{selectedForDelete?.car || '-'}</span> - Patente: <span className="font-semibold text-slate-700">{selectedForDelete?.licensePlate || '-'}</span></p>
+        <p className="text-sm text-slate-500 mb-5">Auto: <span className="font-semibold text-slate-700">{selectedForDelete?.car || '-'}</span> - Patente: <span className="font-semibold font-mono text-slate-700">{selectedForDelete?.licensePlate || '-'}</span></p>
 
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={() => setIsDeleteModalOpen(false)}>

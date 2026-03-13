@@ -56,6 +56,10 @@ type ProviderMovement = {
   creditRunning: number;
   description: string;
   docId: string;
+  hasAttachment?: boolean;
+  attachmentDataUrl?: string;
+  attachmentMimeType?: string;
+  attachmentName?: string;
 };
 
 type ProviderDetail = {
@@ -161,10 +165,23 @@ const parseLocalizedAmount = (value: string) => {
         : compact.replace(/,/g, '');
   } else if (lastComma !== -1) {
     normalized = compact.replace(',', '.');
+  } else if (lastDot !== -1) {
+    const dotCount = (compact.match(/\./g) || []).length;
+    const looksLikeThousands = /^\d{1,3}(\.\d{3})+$/.test(compact);
+    normalized = dotCount > 1 || looksLikeThousands ? compact.replace(/\./g, '') : compact;
   }
 
   const numeric = Number(normalized);
   return Number.isFinite(numeric) ? numeric : NaN;
+};
+
+const normalizeAmountInput = (rawValue: string) => {
+  let next = String(rawValue || '').replace(/[^0-9.,]/g, '');
+  const firstComma = next.indexOf(',');
+  if (firstComma !== -1) {
+    next = `${next.slice(0, firstComma + 1)}${next.slice(firstComma + 1).replace(/,/g, '')}`;
+  }
+  return next;
 };
 
 const formatLocalizedAmount = (value: number) =>
@@ -172,6 +189,17 @@ const formatLocalizedAmount = (value: number) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
+
+const normalizeAiInvoiceNumber = (value: string) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const segment = raw.includes('-') ? String(raw.split('-').pop() || '').trim() : raw;
+  const digits = segment.replace(/\D/g, '');
+  if (!digits) return raw;
+
+  return String(Number(digits));
+};
 
 const PAYMENT_TYPE_OPTIONS = [
   { value: 'Pago', label: 'Pago' },
@@ -215,6 +243,7 @@ export const Accounts: React.FC = () => {
   const [isAttachmentViewerOpen, setIsAttachmentViewerOpen] = useState(false);
   const [form, setForm] = useState<MovementFormState>(emptyForm());
   const paymentAttachmentInputRef = useRef<HTMLInputElement>(null);
+  const purchaseAttachmentInputRef = useRef<HTMLInputElement>(null);
   const [formError, setFormError] = useState('');
   const [isPaymentTypeOpen, setIsPaymentTypeOpen] = useState(false);
   const [isPaymentDateOpen, setIsPaymentDateOpen] = useState(false);
@@ -288,17 +317,48 @@ export const Accounts: React.FC = () => {
         provider,
         movementType,
         type: movement.type || (movementType === 'payment' ? 'Pago' : 'Deuda'),
-        amount: String(Math.abs(Number(movement.amount) || 0)),
+        amount: formatLocalizedAmount(Math.abs(Number(movement.amount) || 0)),
         date: toInputDate(movement.date),
         invoiceNumber: movement.invoiceNumber === '-' ? '' : movement.invoiceNumber,
         observation: movement.description || '',
         cancelledInvoiceNumbers: movement.cancelledInvoiceNumber
           ? movement.cancelledInvoiceNumber.split(' - ').map((v) => v.trim()).filter(Boolean)
           : [],
-        attachmentDataUrl: '',
-        attachmentMimeType: '',
-        attachmentName: '',
+        attachmentDataUrl: movement.attachmentDataUrl || '',
+        attachmentMimeType: movement.attachmentMimeType || '',
+        attachmentName: movement.attachmentName || '',
       });
+
+      if (!movement.attachmentDataUrl && movement.docId && token) {
+        fetch('/api/accounts', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'getattachment',
+            docId: movement.docId,
+          }),
+        })
+          .then(async (response) => {
+            const payload = await response.json();
+            if (!response.ok || !payload?.found) return;
+
+            setForm((prev) => {
+              if (prev.movementId !== movement.id) return prev;
+              return {
+                ...prev,
+                attachmentDataUrl: payload.attachmentDataUrl || prev.attachmentDataUrl,
+                attachmentMimeType: payload.attachmentMimeType || prev.attachmentMimeType,
+                attachmentName: payload.attachmentName || prev.attachmentName,
+              };
+            });
+          })
+          .catch(() => {
+            // Keep edit flow resilient even when attachment retrieval fails.
+          });
+      }
     } else {
       setForm(emptyForm(provider, movementType));
     }
@@ -347,8 +407,8 @@ export const Accounts: React.FC = () => {
 
       setForm((prev) => ({
         ...prev,
-        invoiceNumber: payload.invoiceNumber || prev.invoiceNumber,
-        amount: payload.amount ? String(payload.amount) : prev.amount,
+        invoiceNumber: normalizeAiInvoiceNumber(payload.invoiceNumber) || prev.invoiceNumber,
+        amount: Number.isFinite(Number(payload.amount)) ? formatLocalizedAmount(Number(payload.amount)) : prev.amount,
         date: payload.date ? String(payload.date).slice(0, 10) : prev.date,
         type: payload.type || prev.type,
         observation: payload.description || prev.observation,
@@ -407,6 +467,8 @@ export const Accounts: React.FC = () => {
           observation: form.observation,
           cancelledInvoiceNumbers: form.cancelledInvoiceNumbers,
           attachmentDataUrl: form.attachmentDataUrl,
+          attachmentMimeType: form.attachmentMimeType,
+          attachmentName: form.attachmentName,
           userName: user?.name || user?.Nombre_U || user?.username || 'WebApp',
         }),
       });
@@ -489,6 +551,35 @@ export const Accounts: React.FC = () => {
     const worksheet = XLSX.utils.json_to_sheet(data);
     XLSX.utils.book_append_sheet(workbook, worksheet, 'CuentaCorriente');
     XLSX.writeFile(workbook, `CuentaCorriente_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  const exportDetailExcel = () => {
+    if (!detail) return;
+
+    const data = movementRows.map((movement) => {
+      const isPurchase = movement.amount > 0;
+      const absoluteAmount = Math.abs(Number(movement.amount) || 0);
+      return {
+        Estado: movement.status,
+        Fecha: movement.date,
+        NroFactura: movement.invoiceNumber || '-',
+        Tipo: movement.type || (isPurchase ? 'Compra' : 'Pago'),
+        Deuda: isPurchase ? absoluteAmount : 0,
+        Haber: isPurchase ? 0 : absoluteAmount,
+        Saldo: Number(movement.balancePost) || 0,
+      };
+    });
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'DetalleCuenta');
+
+    const safeProviderName = String(detail.provider || 'Proveedor')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]+/g, '_')
+      .replace(/^_+|_+$/g, '') || 'Proveedor';
+
+    XLSX.writeFile(workbook, `CuentaCorriente_Detalle_${safeProviderName}_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   const movementRows = useMemo(() => {
@@ -641,6 +732,13 @@ export const Accounts: React.FC = () => {
 
           {detail ? (
             <>
+              <Button
+                variant="outline"
+                className="h-10 rounded-xl bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                onClick={exportDetailExcel}
+              >
+                <FileSpreadsheet className="w-4 h-4 mr-2" /> Exportar detalle
+              </Button>
               <Button
                 variant="outline"
                 className="h-10 rounded-xl text-slate-700 border-slate-200 bg-white hover:bg-slate-50"
@@ -850,6 +948,7 @@ export const Accounts: React.FC = () => {
                     const absoluteAmount = Math.abs(Number(movement.amount) || 0);
                     const previousMovement = index > 0 ? movementRows[index - 1] : null;
                     const hasCut = previousMovement ? (previousMovement.amount > 0) !== isPurchase : false;
+                    const isCancelled = String(movement.status).toLowerCase().includes('cancelada');
                     const canToggleStatus = isPurchase && !String(movement.status).toLowerCase().includes('anulada');
 
                     return (
@@ -895,13 +994,15 @@ export const Accounts: React.FC = () => {
                         </td>
                         <td className="py-2 px-4">
                           <div className="flex items-center justify-center gap-1">
-                            <button
-                              className="p-1.5 rounded-md border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300 bg-white"
-                              title="Editar"
-                              onClick={() => openMovementModal(isPurchase ? 'purchase' : 'payment', movement)}
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
+                            {!isCancelled ? (
+                              <button
+                                className="p-1.5 rounded-md border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300 bg-white"
+                                title="Editar"
+                                onClick={() => openMovementModal(isPurchase ? 'purchase' : 'payment', movement)}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                            ) : null}
                             {canToggleStatus ? (
                               String(movement.status).toLowerCase().includes('pendiente') ? (
                                 <button
@@ -921,13 +1022,15 @@ export const Accounts: React.FC = () => {
                                 </button>
                               )
                             ) : null}
-                            <button
-                              className="p-1.5 rounded-md border border-red-300 text-red-600 hover:bg-red-50 bg-white"
-                              title="Borrar"
-                              onClick={() => deleteMovement(movement)}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {!isCancelled ? (
+                              <button
+                                className="p-1.5 rounded-md border border-red-300 text-red-600 hover:bg-red-50 bg-white"
+                                title="Borrar"
+                                onClick={() => deleteMovement(movement)}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            ) : null}
                           </div>
                         </td>
                       </tr>
@@ -1105,7 +1208,7 @@ export const Accounts: React.FC = () => {
                   type="text"
                   inputMode="decimal"
                   value={form.amount}
-                  onChange={(event) => setForm((prev) => ({ ...prev, amount: event.target.value }))}
+                  onChange={(event) => setForm((prev) => ({ ...prev, amount: normalizeAmountInput(event.target.value) }))}
                   onBlur={() => {
                     const parsed = parseLocalizedAmount(form.amount);
                     if (!Number.isFinite(parsed)) return;
@@ -1210,7 +1313,169 @@ export const Accounts: React.FC = () => {
         </div>
       </Dialog>
 
+      
+
       <Dialog
+        open={openPurchaseModal}
+        onOpenChange={(open) => {
+          setOpenPurchaseModal(open);
+          if (!open) {
+            setFormError('');
+            setIsAttachmentViewerOpen(false);
+          }
+        }}
+        title={`${form.movementId ? 'Editar Factura de Compra' : 'Agregar Factura de Compra'} · ${form.provider || '-'}`}
+        className="max-w-3xl"
+      >
+        <div className="space-y-4">
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-medium text-slate-500 tracking-[0.05em] uppercase block mb-1.5">Nro Factura</label>
+                <Input
+                  value={form.invoiceNumber}
+                  className="rounded-lg border-slate-300"
+                  onChange={(event) => setForm((prev) => ({ ...prev, invoiceNumber: event.target.value }))}
+                  placeholder="Ej: 0001-00012345"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-medium text-slate-500 tracking-[0.05em] uppercase block mb-1.5">Fecha</label>
+                <Popover.Root open={isPurchaseDateOpen} onOpenChange={setIsPurchaseDateOpen}>
+                  <Popover.Trigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 w-full justify-between rounded-lg border-slate-300 bg-white px-3 text-sm font-normal"
+                    >
+                      <span>{isoToDisplayDate(form.date) || 'Seleccionar fecha'}</span>
+                      <CalendarIcon className="h-4 w-4 text-slate-500" />
+                    </Button>
+                  </Popover.Trigger>
+                  <Popover.Portal>
+                    <Popover.Content className="z-[10002]" sideOffset={6}>
+                      <Calendar
+                        mode="single"
+                        selected={isoToDate(form.date)}
+                        onSelect={(date) => {
+                          const iso = dateToIsoString(date);
+                          if (iso) setForm((prev) => ({ ...prev, date: iso }));
+                          setIsPurchaseDateOpen(false);
+                        }}
+                      />
+                    </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-medium text-slate-500 tracking-[0.05em] uppercase block mb-1.5">Monto</label>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={form.amount}
+                  onChange={(event) => setForm((prev) => ({ ...prev, amount: normalizeAmountInput(event.target.value) }))}
+                  onBlur={() => {
+                    const parsed = parseLocalizedAmount(form.amount);
+                    if (!Number.isFinite(parsed)) return;
+                    const rounded = Math.round(parsed * 100) / 100;
+                    setForm((prev) => ({ ...prev, amount: formatLocalizedAmount(rounded) }));
+                  }}
+                  className="font-semibold rounded-lg border-slate-300"
+                  placeholder="Ej: 2.000.000,65"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-medium text-slate-500 tracking-[0.05em] uppercase block mb-1.5">Proveedor</label>
+                <Input value={form.provider} disabled className="rounded-lg border-slate-200 bg-slate-100 text-slate-700" />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-medium text-slate-500 tracking-[0.05em] uppercase block mb-1.5">Observaciones</label>
+              <textarea
+                rows={2}
+                placeholder="Notas adicionales..."
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-500"
+                value={form.observation}
+                onChange={(event) => setForm((prev) => ({ ...prev, observation: event.target.value }))}
+              />
+            </div>
+
+            <div className="pt-3 border-t border-slate-200 bg-slate-50/80 flex flex-wrap items-center justify-between gap-3 px-4 py-3 -mx-4 -mb-4 rounded-b-xl">
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={`h-10 rounded-lg border ${
+                    form.attachmentDataUrl
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                      : 'border-slate-300'
+                  }`}
+                  onClick={() => purchaseAttachmentInputRef.current?.click()}
+                >
+                  <Camera className="w-4 h-4 mr-2" />
+                  {form.attachmentDataUrl ? 'Archivo subido' : 'Subir archivo'}
+                </Button>
+                <input
+                  ref={purchaseAttachmentInputRef}
+                  type="file"
+                  accept="image/*,application/pdf"
+                  className="hidden"
+                  onChange={handleAttachmentChange}
+                />
+
+                {form.attachmentDataUrl ? (
+                  <>
+                    <button
+                      type="button"
+                      className="inline-flex items-center justify-center h-10 w-10 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-100"
+                      title="Cambiar archivo"
+                      onClick={() => purchaseAttachmentInputRef.current?.click()}
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex items-center justify-center h-10 w-10 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-100"
+                      title="Ver archivo"
+                      onClick={() => setIsAttachmentViewerOpen(true)}
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+                  </>
+                ) : null}
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 rounded-lg border-slate-300 ml-1"
+                  onClick={analyzeInvoiceWithGemini}
+                  disabled={!form.attachmentDataUrl || isParsingInvoice}
+                >
+                  {isParsingInvoice ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <WandSparkles className="w-4 h-4 mr-2" />}
+                  Completar con IA
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button variant="outline" className="h-10 rounded-lg border-slate-300" onClick={() => setOpenPurchaseModal(false)}>
+                  Cancelar
+                </Button>
+                <Button className="h-10 rounded-lg bg-[#1D9E75] hover:bg-[#0F6E56]" onClick={saveMovement} isLoading={isSavingMovement}>
+                  {form.movementId ? 'Guardar factura' : 'Agregar factura'}
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {formError ? <p className="text-sm text-red-600">{formError}</p> : null}
+        </div>
+      </Dialog>
+
+        <Dialog
         open={isAttachmentViewerOpen && Boolean(form.attachmentDataUrl)}
         onOpenChange={setIsAttachmentViewerOpen}
         title={`Visualizador · ${form.attachmentName || 'Archivo adjunto'}`}
@@ -1234,126 +1499,6 @@ export const Accounts: React.FC = () => {
               No hay vista previa para este tipo de archivo.
             </div>
           )}
-        </div>
-      </Dialog>
-
-      <Dialog
-        open={openPurchaseModal}
-        onOpenChange={(open) => {
-          setOpenPurchaseModal(open);
-          if (!open) setFormError('');
-        }}
-        title={form.movementId ? 'Editar Factura de Compra' : 'Agregar Factura de Compra'}
-        className="max-w-3xl"
-      >
-        <div className="space-y-4">
-          <div className="rounded-xl border border-slate-200 bg-gradient-to-b from-white to-slate-50/70 p-4 space-y-4">
-            <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Registro de factura</p>
-              <span className="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700">
-                Ingreso de deuda
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">Proveedor</label>
-                <Input value={form.provider} disabled className="mt-1 bg-slate-100/80 border-slate-200 text-slate-700" />
-              </div>
-              <div>
-                <label className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">Nro Factura</label>
-                <Input
-                  value={form.invoiceNumber}
-                  className="mt-1 rounded-xl border-slate-200"
-                  onChange={(event) => setForm((prev) => ({ ...prev, invoiceNumber: event.target.value }))}
-                  placeholder="Ej: 0001-00012345"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">Monto</label>
-                <Input
-                  type="number"
-                  min="0"
-                  className="mt-1 rounded-xl border-slate-200"
-                  value={form.amount}
-                  onChange={(event) => setForm((prev) => ({ ...prev, amount: event.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">Fecha</label>
-                <Popover.Root open={isPurchaseDateOpen} onOpenChange={setIsPurchaseDateOpen}>
-                  <Popover.Trigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="mt-1 h-10 w-full justify-between rounded-xl border-slate-200 bg-white px-3 text-sm font-normal"
-                    >
-                      <span>{isoToDisplayDate(form.date) || 'Seleccionar fecha'}</span>
-                      <CalendarIcon className="h-4 w-4 text-slate-500" />
-                    </Button>
-                  </Popover.Trigger>
-                  <Popover.Portal>
-                    <Popover.Content className="z-[10002]" sideOffset={6}>
-                      <Calendar
-                        mode="single"
-                        selected={isoToDate(form.date)}
-                        onSelect={(date) => {
-                          const iso = dateToIsoString(date);
-                          if (iso) setForm((prev) => ({ ...prev, date: iso }));
-                          setIsPurchaseDateOpen(false);
-                        }}
-                      />
-                    </Popover.Content>
-                  </Popover.Portal>
-                </Popover.Root>
-              </div>
-            </div>
-
-            <div>
-              <label className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">Observaciones</label>
-              <textarea
-                className="mt-1 w-full rounded-xl border border-slate-200 p-3 text-sm min-h-[96px] bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-100"
-                value={form.observation}
-                onChange={(event) => setForm((prev) => ({ ...prev, observation: event.target.value }))}
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-            <label className="inline-flex items-center gap-2 rounded-xl bg-[#0d8a43] hover:bg-[#0b7539] text-white px-4 py-2.5 cursor-pointer text-sm font-semibold shadow-sm">
-              <Camera className="w-4 h-4" />
-              Agregar fotografía/PDF
-              <input type="file" accept="image/*,application/pdf" className="hidden" onChange={handleAttachmentChange} />
-            </label>
-
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 rounded-xl border-slate-300"
-              onClick={analyzeInvoiceWithGemini}
-              disabled={!form.attachmentDataUrl || isParsingInvoice}
-            >
-              {isParsingInvoice ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <WandSparkles className="w-4 h-4 mr-2" />}
-              Completar con IA
-            </Button>
-
-            {form.attachmentDataUrl ? (
-              <span className="inline-flex items-center text-xs text-emerald-700 gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Archivo listo
-              </span>
-            ) : null}
-          </div>
-
-          {formError ? <p className="text-sm text-red-600">{formError}</p> : null}
-
-          <div className="grid grid-cols-2 gap-3 pt-1">
-            <Button variant="outline" className="h-11 rounded-xl border-slate-300" onClick={() => setOpenPurchaseModal(false)}>
-              <X className="w-4 h-4 mr-2" /> Cancelar
-            </Button>
-            <Button className="h-11 rounded-xl bg-[#0d8a43] hover:bg-[#0b7539]" onClick={saveMovement} isLoading={isSavingMovement}>
-              {form.movementId ? 'Guardar' : 'Agregar'}
-            </Button>
-          </div>
         </div>
       </Dialog>
     </div>
