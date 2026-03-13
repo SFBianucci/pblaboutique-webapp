@@ -2,6 +2,7 @@
 // Nota: En un entorno de build standard (Node.js), usaríamos 'module.exports'.
 // Para el entorno CDN actual, asignamos directamente a 'tailwind.config'.
 
+window.tailwind = window.tailwind || {};
 window.tailwind.config = {
   darkMode: 'class',
   theme: {

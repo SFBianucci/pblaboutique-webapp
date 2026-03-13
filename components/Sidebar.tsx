@@ -19,7 +19,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onMobileClose }) => {
 
   const disabledPaths = new Set<string>([
     ROUTES.inventory,
-    ROUTES.accounts,
     ROUTES.reports,
     ROUTES.stockReports,
     ROUTES.settings,

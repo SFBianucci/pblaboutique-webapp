@@ -66,7 +66,7 @@ function AuthenticatedApp() {
             <Route path={ROUTES.invoices} element={<Invoices />} />
             <Route path={ROUTES.inventory} element={<ModuleDisabled />} />
             <Route path={ROUTES.appointments} element={<Appointments />} />
-            <Route path={ROUTES.accounts} element={<ModuleDisabled />} />
+            <Route path={ROUTES.accounts} element={<Accounts />} />
             <Route path={ROUTES.reports} element={<ModuleDisabled />} />
             <Route path={ROUTES.stockReports} element={<ModuleDisabled />} />
             <Route path={ROUTES.settings} element={<ModuleDisabled />} />

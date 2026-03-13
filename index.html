@@ -5,12 +5,59 @@
     <link rel="icon" type="image/svg+xml" href="https://lucide.dev/logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bouticapp</title>
-    
-    <!-- Tailwind CSS CDN -->
+    <script>
+      window.tailwind = window.tailwind || {};
+      window.tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                DEFAULT: '#114a28',
+                foreground: '#ffffff'
+              },
+              secondary: {
+                DEFAULT: '#f3f4f6',
+                foreground: '#1f2937'
+              },
+              destructive: {
+                DEFAULT: '#ef4444',
+                foreground: '#ffffff'
+              },
+              accent: {
+                DEFAULT: '#dcfce7',
+                foreground: '#166534'
+              },
+              card: {
+                DEFAULT: '#ffffff',
+                foreground: '#020817'
+              },
+              success: {
+                DEFAULT: '#22c55e',
+                foreground: '#ffffff'
+              },
+              warning: {
+                DEFAULT: '#f97316',
+                foreground: '#ffffff'
+              },
+              info: {
+                DEFAULT: '#3b82f6',
+                foreground: '#ffffff'
+              }
+            },
+            fontFamily: {
+              sans: ['Inter', 'sans-serif']
+            },
+            borderRadius: {
+              lg: 'var(--radius)',
+              md: 'calc(var(--radius) - 2px)',
+              sm: 'calc(var(--radius) - 4px)'
+            }
+          }
+        }
+      };
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Tailwind Config -->
-    <script src="/tailwind.config.js"></script>
 
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -40,7 +87,7 @@
         background: #888; 
       }
     </style>
-</head>
+  </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>

@@ -5,6 +5,7 @@ import { Badge } from './ui/Badge';
 import { CheckCircle, Printer, Download, Undo2, Trash2, FileText, Eye, X, AlertTriangle } from 'lucide-react';
 import { Invoice } from '../types';
 import { formatCurrency } from '../lib/utils';
+import { useAuth } from '../lib/AuthContext';
 
 interface InvoiceDetailModalProps {
     invoice: Invoice | null;
@@ -15,6 +16,8 @@ interface InvoiceDetailModalProps {
 export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoice, onClose, onStatusChange }) => {
     if (!invoice) return null;
     const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+    const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+    const { token } = useAuth();
 
     const hasLinkedDocument = Boolean(invoice.fileDataUrl);
     const isPdfDocument = Boolean(
@@ -28,8 +31,8 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoice,
         window.open(invoice.fileDataUrl, '_blank', 'noopener,noreferrer');
     };
 
-    const downloadLinkedDocument = () => {
-        if (!invoice.fileDataUrl) return;
+    const downloadLinkedDocument = async () => {
+        if (!invoice.fileDataUrl || isDownloadingPdf) return;
 
         const sanitizeSegment = (value: string) =>
             String(value || '')
@@ -52,12 +55,52 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoice,
             .filter(Boolean)
             .join('_');
 
-        const anchor = document.createElement('a');
-        anchor.href = invoice.fileDataUrl;
-        anchor.download = `${composedName || 'Factura'}${extension}`;
-        document.body.appendChild(anchor);
-        anchor.click();
-        document.body.removeChild(anchor);
+        const fallbackDirectDownload = () => {
+            const anchor = document.createElement('a');
+            anchor.href = invoice.fileDataUrl || '';
+            anchor.download = `${composedName || 'Factura'}${extension}`;
+            document.body.appendChild(anchor);
+            anchor.click();
+            document.body.removeChild(anchor);
+        };
+
+        setIsDownloadingPdf(true);
+        try {
+            if (!token) {
+                fallbackDirectDownload();
+                return;
+            }
+
+            const response = await fetch(`/api/invoices?id=${encodeURIComponent(invoice.id)}&download=1`, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
+
+            if (!response.ok) {
+                throw new Error('No se pudo descargar el archivo desde el servidor.');
+            }
+
+            const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
+
+            const contentDisposition = response.headers.get('content-disposition') || '';
+            const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+            const serverFileName = filenameMatch?.[1]?.trim();
+
+            const anchor = document.createElement('a');
+            anchor.href = objectUrl;
+            anchor.download = serverFileName || `${composedName || 'Factura'}${extension}`;
+            document.body.appendChild(anchor);
+            anchor.click();
+            document.body.removeChild(anchor);
+            URL.revokeObjectURL(objectUrl);
+        } catch (error) {
+            console.error('Invoice download fallback:', error);
+            fallbackDirectDownload();
+        } finally {
+            setIsDownloadingPdf(false);
+        }
     };
 
     const getStatusBadge = (status: string) => {
@@ -177,9 +220,11 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoice,
                         variant="outline"
                         className="h-10 border-gray-300 text-gray-600"
                         onClick={downloadLinkedDocument}
-                        disabled={!hasLinkedDocument}
+                        disabled={!hasLinkedDocument || isDownloadingPdf}
+                        isLoading={isDownloadingPdf}
                     >
-                        <Download className="w-4 h-4 mr-2" /> PDF
+                        {!isDownloadingPdf ? <Download className="w-4 h-4 mr-2" /> : null}
+                        {isDownloadingPdf ? 'Descargando...' : 'PDF'}
                     </Button>
                     {(invoice.status === 'paid' || invoice.status === 'deleted') && (
                         <Button 

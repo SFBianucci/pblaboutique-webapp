@@ -79,6 +79,20 @@ const sanitizeFileName = (name) => {
   return base.replace(/[^a-zA-Z0-9._-]/g, "_");
 };
 
+const buildAttachmentResponseName = (invoiceId, fileName, mimeType) => {
+  const baseName = String(fileName || "").trim();
+  const fallbackBase = `factura-${String(invoiceId || "").trim() || "adjunto"}`;
+  const safeBase = sanitizeFileName(baseName || fallbackBase);
+
+  if (/\.[a-zA-Z0-9]+$/.test(safeBase)) return safeBase;
+  if (String(mimeType || "").toLowerCase().includes("pdf")) return `${safeBase}.pdf`;
+  if (String(mimeType || "").toLowerCase().startsWith("image/")) {
+    const ext = String(mimeType).toLowerCase().split("/")[1] || "jpg";
+    return `${safeBase}.${ext.replace(/[^a-z0-9]/g, "") || "jpg"}`;
+  }
+  return `${safeBase}.bin`;
+};
+
 const getBearerToken = (req) => {
   const { authorization } = req.headers;
   if (!authorization || !authorization.startsWith("Bearer ")) return null;
@@ -126,6 +140,88 @@ const parseLinkedAttachment = (photoFields) => {
   }
 
   return { fileName, fileDataUrl };
+};
+
+const parseDataUrlAttachment = (dataUrl) => {
+  const raw = String(dataUrl || "").trim();
+  const match = raw.match(/^data:([^;,]+)?(?:;charset=[^;,]+)?;base64,(.+)$/i);
+  if (!match) return null;
+
+  const mimeType = String(match[1] || "application/octet-stream").toLowerCase();
+  const base64Payload = String(match[2] || "").trim();
+  if (!base64Payload) return null;
+
+  return {
+    mimeType,
+    buffer: Buffer.from(base64Payload, "base64"),
+  };
+};
+
+const downloadBinaryFromUrl = async (url) => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`No se pudo descargar el adjunto remoto (HTTP ${response.status})`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const mimeType = String(response.headers.get("content-type") || "application/octet-stream").toLowerCase();
+  return {
+    mimeType,
+    buffer: Buffer.from(arrayBuffer),
+  };
+};
+
+const downloadInvoiceAttachment = async (client, siteId, invoiceId) => {
+  const attachment = await fetchLatestAttachmentByInvoiceId(client, siteId, invoiceId);
+  const fileName = String(attachment.fileName || "").trim();
+  const fileDataUrl = String(attachment.fileDataUrl || "").trim();
+
+  if (!fileDataUrl) {
+    return null;
+  }
+
+  const parsedDataUrl = parseDataUrlAttachment(fileDataUrl);
+  if (parsedDataUrl) {
+    return {
+      fileName: buildAttachmentResponseName(invoiceId, fileName, parsedDataUrl.mimeType),
+      mimeType: parsedDataUrl.mimeType,
+      buffer: parsedDataUrl.buffer,
+    };
+  }
+
+  // Prefer reading from the canonical document-library path for PDFs uploaded by this API.
+  if (fileName.toLowerCase().endsWith(".pdf")) {
+    try {
+      const safePath = `FacturasSeguros/${invoiceId}/${sanitizeFileName(fileName)}`;
+      const driveItem = await client
+        .api(`/sites/${siteId}/drive/root:/${safePath}`)
+        .get();
+
+      const directDownloadUrl = driveItem?.["@microsoft.graph.downloadUrl"];
+      if (directDownloadUrl) {
+        const downloaded = await downloadBinaryFromUrl(directDownloadUrl);
+        return {
+          fileName: buildAttachmentResponseName(invoiceId, driveItem?.name || fileName, downloaded.mimeType),
+          mimeType: downloaded.mimeType,
+          buffer: downloaded.buffer,
+        };
+      }
+    } catch (error) {
+      // Continue to fallback URL strategy below.
+      console.error("PDF library download fallback:", error?.message || error);
+    }
+  }
+
+  if (/^https?:\/\//i.test(fileDataUrl)) {
+    const downloaded = await downloadBinaryFromUrl(fileDataUrl);
+    return {
+      fileName: buildAttachmentResponseName(invoiceId, fileName, downloaded.mimeType),
+      mimeType: downloaded.mimeType,
+      buffer: downloaded.buffer,
+    };
+  }
+
+  return null;
 };
 
 async function fetchLatestAttachmentByInvoiceId(client, siteId, invoiceId) {
@@ -349,6 +445,20 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       const requestedId = String(req.query?.id || "").trim();
+      const shouldDownload = String(req.query?.download || "").trim() === "1";
+
+      if (requestedId && shouldDownload) {
+        const downloadable = await downloadInvoiceAttachment(client, siteId, requestedId);
+        if (!downloadable?.buffer || downloadable.buffer.length === 0) {
+          return res.status(404).json({ error: "No se encontro un adjunto descargable para esta factura" });
+        }
+
+        res.setHeader("Content-Type", downloadable.mimeType || "application/octet-stream");
+        res.setHeader("Content-Disposition", `attachment; filename="${downloadable.fileName}"`);
+        res.setHeader("Cache-Control", "no-store");
+        return res.status(200).send(downloadable.buffer);
+      }
+
       if (requestedId) {
         const invoiceItem = await fetchInvoiceItem(client, siteId, requestedId);
         const attachment = await fetchLatestAttachmentByInvoiceId(client, siteId, requestedId);

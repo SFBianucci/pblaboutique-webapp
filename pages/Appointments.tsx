@@ -130,10 +130,17 @@ const formatDateHeader = (dateIso: string) => {
 };
 
 const mapStatusToClasses: Record<AppointmentStatus, string> = {
-  Pendiente: 'bg-amber-50 text-amber-700 border border-amber-200',
-  Terminado: 'bg-lime-50 text-lime-700 border border-lime-200',
-  Entregado: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
-  Eliminado: 'bg-slate-100 text-slate-600 border border-slate-200',
+  Pendiente: 'bg-gradient-to-r from-amber-50 to-orange-50 text-amber-700 border border-amber-200/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]',
+  Terminado: 'bg-gradient-to-r from-lime-50 to-emerald-50 text-lime-700 border border-lime-200/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]',
+  Entregado: 'bg-gradient-to-r from-emerald-50 to-green-50 text-emerald-700 border border-emerald-200/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]',
+  Eliminado: 'bg-gradient-to-r from-slate-100 to-slate-50 text-slate-600 border border-slate-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]',
+};
+
+const mapStatusCardTone: Record<AppointmentStatus, string> = {
+  Pendiente: 'bg-gradient-to-br from-white via-white to-amber-50/30 border-amber-100',
+  Terminado: 'bg-gradient-to-br from-white via-white to-lime-50/35 border-lime-100',
+  Entregado: 'bg-gradient-to-br from-white via-white to-emerald-50/35 border-emerald-100',
+  Eliminado: 'bg-gradient-to-br from-white via-white to-slate-100/60 border-slate-200',
 };
 
 const mapStatusText = (status: string): AppointmentStatus => {
@@ -665,20 +672,26 @@ export const Appointments: React.FC = () => {
         </div>
       )}
 
-      <div className="flex flex-col gap-2 bg-white p-2 rounded-lg border shadow-sm lg:flex-row lg:items-center lg:justify-between">
-        <h2 className="text-xl font-bold text-gray-700">Turnos</h2>
+      <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="pl-1">
+            <h2 className="text-[34px] leading-none font-extrabold tracking-tight text-slate-800">Turnos</h2>
+            <p className="mt-1 text-sm font-medium text-slate-500">
+              Vista de agenda · {appointments.length} turnos en {groupedAppointments.length} dias
+            </p>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
-            className="text-gray-600 border-gray-300 bg-white"
+            className="h-10 text-slate-600 border-slate-200 hover:bg-slate-50 rounded-xl font-medium"
             onClick={() => loadAppointments(filters)}
             isLoading={loading}
           >
             <RefreshCw className="w-4 h-4 mr-2" /> Actualizar
           </Button>
 
-          <Button className="bg-[#114a28] hover:bg-[#0e3b20]" onClick={openNewAppointmentModal}>
+          <Button className="h-10 rounded-xl bg-[#0f5a33] hover:bg-[#0c4a2a] text-white font-semibold shadow-sm" onClick={openNewAppointmentModal}>
             Turno Nuevo <Plus className="w-4 h-4 ml-1" />
           </Button>
 
@@ -698,7 +711,7 @@ export const Appointments: React.FC = () => {
             }}
           >
             <Popover.Trigger asChild>
-              <Button variant="outline" className="text-gray-600 border-gray-300 bg-white">
+              <Button variant="outline" className="h-10 text-slate-600 border-slate-200 hover:bg-slate-50 rounded-xl font-medium">
                 <Filter className="w-4 h-4 mr-2" />
                 Filtrar
                 {activeFiltersCount > 0 ? (
@@ -860,6 +873,7 @@ export const Appointments: React.FC = () => {
               </Popover.Content>
             </Popover.Portal>
           </Popover.Root>
+          </div>
         </div>
       </div>
 
@@ -874,11 +888,12 @@ export const Appointments: React.FC = () => {
           </div>
         ) : null}
 
-        <div className="flex min-w-max items-start gap-3 pb-2 h-full">
+        <div className="flex min-w-max items-start gap-4 pb-2 h-full">
           {groupedAppointments.map((group) => (
             <div key={group.key} className="flex w-[336px] flex-shrink-0 flex-col gap-2 h-full">
-              <div className="px-1 py-0.5 text-[20px] font-bold text-slate-700 tracking-tight">
+              <div className="rounded-xl border border-slate-200/80 bg-white/90 px-3 py-2 text-[20px] font-extrabold text-slate-700 tracking-tight shadow-[0_8px_20px_-18px_rgba(15,23,42,0.7)] backdrop-blur-sm">
                 {group.title}
+                <div className="mt-1 h-[2px] w-12 rounded-full bg-gradient-to-r from-[#114a28] to-emerald-400/70" />
               </div>
 
               <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2">
@@ -896,19 +911,25 @@ export const Appointments: React.FC = () => {
                   <div
                     key={appointment.id}
                     className={cn(
-                      'rounded-lg p-2.5 text-[13px] border relative group shadow-sm',
-                      isTaller ? 'bg-[#E3EAF6] border-[#9EB4D5] border-2' : 'bg-white border-[#D8D4D4]',
+                      'relative group rounded-2xl p-3 text-[13px] border shadow-sm transition-all duration-200 hover:-translate-y-[1px] hover:shadow-lg hover:border-slate-300',
+                      mapStatusCardTone[appointment.status],
+                      isTaller
+                        ? 'bg-gradient-to-br from-[#eef3fb] via-[#e8effa] to-[#dde7f7] border-[#9eb4d5] border-2 shadow-[0_12px_24px_-16px_rgba(27,54,96,0.55)]'
+                        : 'border-[#d8dde7] shadow-[0_10px_24px_-20px_rgba(15,23,42,0.45)]',
                     )}
                   >
+                    <div className="pointer-events-none absolute left-0 top-4 h-10 w-[3px] rounded-r-full bg-gradient-to-b from-slate-300/70 to-slate-400/40 group-hover:from-[#114a28]/70 group-hover:to-emerald-400/60" />
+                    <div className="pointer-events-none absolute inset-0 rounded-2xl bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.65),transparent_45%)]" />
+
                     <div className="mb-1.5 flex items-start justify-between gap-2">
-                      <Badge className={cn('text-[10px] px-2 py-0.5 uppercase font-bold', mapStatusToClasses[appointment.status])}>
+                      <Badge className={cn('text-[10px] px-2.5 py-0.5 uppercase font-bold tracking-wide', mapStatusToClasses[appointment.status])}>
                         {appointment.status}
                       </Badge>
 
-                      <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                      <div className="relative z-[1] flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                         {canFinish ? (
                           <button
-                            className="rounded p-1 text-emerald-700 hover:bg-emerald-50"
+                            className="rounded-md p-1 text-emerald-700 hover:bg-emerald-50 border border-transparent hover:border-emerald-200 transition-colors"
                             title="Terminar turno"
                             onClick={() => openFinishModal(appointment)}
                           >
@@ -921,7 +942,7 @@ export const Appointments: React.FC = () => {
 
                         {appointment.status === 'Terminado' ? (
                           <button
-                            className="rounded p-1 text-blue-700 hover:bg-blue-50"
+                            className="rounded-md p-1 text-blue-700 hover:bg-blue-50 border border-transparent hover:border-blue-200 transition-colors"
                             title="Retirar auto"
                             onClick={() => deliverAppointment(appointment)}
                           >
@@ -931,7 +952,7 @@ export const Appointments: React.FC = () => {
 
                         {appointment.status !== 'Eliminado' && appointment.status !== 'Terminado' ? (
                           <button
-                            className="rounded p-1 text-gray-600 hover:bg-gray-100"
+                            className="rounded-md p-1 text-gray-600 hover:bg-gray-100 border border-transparent hover:border-gray-200 transition-colors"
                             title="Editar turno"
                             onClick={() => openEditAppointmentModal(appointment)}
                           >
@@ -941,7 +962,7 @@ export const Appointments: React.FC = () => {
 
                         {appointment.status !== 'Eliminado' && appointment.status !== 'Terminado' ? (
                           <button
-                            className="rounded p-1 text-red-500 hover:bg-red-50"
+                            className="rounded-md p-1 text-red-500 hover:bg-red-50 border border-transparent hover:border-red-200 transition-colors"
                             title="Eliminar turno"
                             onClick={() => openDeleteModal(appointment)}
                           >
@@ -951,39 +972,39 @@ export const Appointments: React.FC = () => {
                       </div>
                     </div>
 
-                    <p className="mb-1.5 font-bold text-[13px] leading-tight text-slate-900">
+                    <p className="relative z-[1] mb-1.5 font-extrabold text-[13px] leading-tight tracking-tight text-slate-900">
                       {appointment.time}
                       {appointment.timeEnd ? ` / ${appointment.timeEnd}` : ''}
                       {' - '}
                       {vehicleSummary}
                     </p>
 
-                    <p className="mb-0.5 text-slate-500 leading-tight">
+                    <p className="relative z-[1] mb-0.5 text-slate-500 leading-tight">
                       Cliente: <span className="font-semibold text-slate-900">{appointment.client || '-'}</span>
                     </p>
-                    <p className="mb-0.5 text-slate-500 leading-tight">
+                    <p className="relative z-[1] mb-0.5 text-slate-500 leading-tight">
                       Telefono: <span className="font-semibold text-slate-900">{appointment.phone || '-'}</span>
                     </p>
-                    <p className="mb-0.5 text-slate-500 leading-tight">
+                    <p className="relative z-[1] mb-0.5 text-slate-500 leading-tight">
                       Seguro: <span className="font-semibold text-slate-900">{appointment.insurance || '-'}</span>
                     </p>
-                    <p className="mb-1.5 text-slate-500 leading-tight">
+                    <p className="relative z-[1] mb-1.5 text-slate-500 leading-tight">
                       Trabajo: <span className="font-semibold text-slate-900">{appointment.description || '-'}</span>
                     </p>
 
-                    <div className="mb-1 border-t border-slate-200" />
+                    <div className="relative z-[1] mb-1 border-t border-dashed border-slate-300/90" />
 
-                    <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[12px] leading-tight text-slate-500">
-                      <span>
+                    <div className="relative z-[1] flex flex-wrap gap-x-2.5 gap-y-0.5 text-[12px] leading-tight text-slate-500">
+                      <span className="rounded-md bg-slate-100/70 px-1.5 py-0.5">
                         Foto: <span className="font-bold text-slate-900">{appointment.requiresPhoto}</span>
                       </span>
-                      <span>
+                      <span className="rounded-md bg-slate-100/70 px-1.5 py-0.5">
                         Polarizado: <span className="font-bold text-slate-900">{appointment.polarized}</span>
                       </span>
-                      <span>
+                      <span className="rounded-md bg-slate-100/70 px-1.5 py-0.5">
                         Grabado: <span className="font-bold text-slate-900">{appointment.engraving}</span>
                       </span>
-                      <span>
+                      <span className="rounded-md bg-slate-100/70 px-1.5 py-0.5">
                         WhatsApp: <span className="font-bold text-slate-900">{appointment.whatsapp}</span>
                       </span>
                     </div>

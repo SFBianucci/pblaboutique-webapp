@@ -26,13 +26,19 @@ export const Login: React.FC = () => {
         body: JSON.stringify({ username, password }),
       });
 
-      const data = await response.json();
+            const contentType = response.headers.get('content-type') || '';
+            const isJsonResponse = contentType.includes('application/json');
+            const data = isJsonResponse ? await response.json() : null;
+
+            if (!isJsonResponse) {
+                throw new Error('API de login no disponible en este modo. Inicia con "npm run dev:full".');
+            }
 
       if (!response.ok) {
-        throw new Error(data.error || 'Error al iniciar sesión');
+                throw new Error(data?.error || 'Error al iniciar sesión');
       }
 
-      if (data.success && data.token) {
+            if (data?.success && data?.token) {
         login(data.token, data.user);
       } else {
         throw new Error('Respuesta inválida del servidor');
