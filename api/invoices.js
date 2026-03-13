@@ -34,6 +34,20 @@ const normalizeComparableText = (value) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
+const shouldForcePaidByBusinessRule = ({ insurance, type, description }) => {
+  const insuranceText = normalizeComparableText(insurance);
+  const typeText = normalizeComparableText(type);
+  const descriptionText = normalizeComparableText(description);
+
+  const isParticular = insuranceText.includes("particular");
+  const isAlquiler =
+    insuranceText.includes("alquiler") ||
+    typeText.includes("alquiler") ||
+    descriptionText.includes("alquiler");
+
+  return isParticular || isAlquiler;
+};
+
 const isCreditNoteType = (invoiceType) => {
   const normalizedType = normalizeComparableText(invoiceType);
   return normalizedType.includes("nota de credito") || normalizedType.startsWith("nc");
@@ -427,7 +441,15 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Falta el estado de la factura" });
       }
 
-      const backendStatus = mapUiStatusToBackendStatus(status);
+      const currentInvoice = await fetchInvoiceItem(client, siteId, invoiceId);
+
+      const backendStatus = shouldForcePaidByBusinessRule({
+        insurance: currentInvoice?.Seguro_RF,
+        type: currentInvoice?.TipoFactura_RF,
+        description: currentInvoice?.Servicio_RF,
+      })
+        ? "Cobrada"
+        : mapUiStatusToBackendStatus(status);
 
       await client
         .api(`/sites/${siteId}/lists/${LIST_IDS.resumenFactura}/items/${invoiceId}/fields`)
@@ -577,7 +599,13 @@ export default async function handler(req, res) {
           fields: {
             ...commonFields,
             Title: "boutique",
-            Status_RF: mapUiStatusToBackendStatus(invoice.status),
+            Status_RF: shouldForcePaidByBusinessRule({
+              insurance,
+              type: invoice.type,
+              description: invoice.description,
+            })
+              ? "Cobrada"
+              : mapUiStatusToBackendStatus(invoice.status),
           },
         });
 
@@ -599,7 +627,16 @@ export default async function handler(req, res) {
 
       await client
         .api(`/sites/${siteId}/lists/${LIST_IDS.resumenFactura}/items/${invoiceId}/fields`)
-        .patch(commonFields);
+        .patch({
+          ...commonFields,
+          ...(shouldForcePaidByBusinessRule({
+            insurance,
+            type: invoice.type,
+            description: invoice.description,
+          })
+            ? { Status_RF: "Cobrada" }
+            : {}),
+        });
 
       if (isCreditNoteType(invoice.type) && normalizedCancelledInvoiceNumber) {
         await markInvoiceAsCancelledByNc(
