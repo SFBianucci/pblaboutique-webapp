@@ -367,7 +367,7 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
                         invoiceNumber: data.invoiceNumber || prev.invoiceNumber,
                         description: data.description || prev.description,
                         licensePlate: data.licensePlate || prev.licensePlate,
-                        amount: data.amount ? data.amount.toString() : prev.amount,
+                        amount: data.amount ? formatCurrencyInput(data.amount) : prev.amount,
                         subtotal: data.subtotal ? data.subtotal.toString() : prev.subtotal,
                         vat: data.vat ? data.vat.toString() : prev.vat,
                         siniestro: data.siniestro || prev.siniestro,
