@@ -39,7 +39,7 @@ export default async function handler(req, res) {
             If a field is not found, return an empty string or 0 for numbers.
             
             Fields to extract:
-            - type: The invoice type (e.g., "Factura A", "Factura B", "Nota de Credito - Factura A", "MiPyme", etc.).
+            - type: The invoice type letter/category. Look at the large letter displayed prominently at the top center of the invoice header (usually "A", "B", or "C") alongside the word "FACTURA" or "NOTA DE CREDITO". Return one of these exact values: "Factura A", "Factura B", "Nota de Credito - Factura A", "Nota de Credito - Factura B", "Factura B - Exenta IVA", "MiPyme". IMPORTANT: Never return just "Factura" without the letter.
             - invoiceNumber: The invoice number, usually in format XXXX-XXXXXXXX.
             - date: The issue date in YYYY-MM-DD format.
             - insurance: The name of the client or insurance company (Aseguradora).

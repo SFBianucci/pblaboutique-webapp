@@ -351,12 +351,21 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
                     // Verificamos si existe en nuestra lista del modal, si no, intentamos un fallback inteligente.
                     let safeType = data.type || prev.type;
                     if (!INVOICE_TYPES.includes(safeType)) {
-                        // Si el tipo devuelto no está exactamente en la lista, intentamos normalizar
-                        if (safeType.includes("Nota de Credito") && safeType.includes("A")) safeType = "Nota de Credito - Factura A";
-                        else if (safeType.includes("Nota de Credito") && safeType.includes("B")) safeType = "Nota de Credito - Factura B";
-                        else if (safeType.includes("Factura") && safeType.includes("A")) safeType = "Factura A";
-                        else if (safeType.includes("Factura") && safeType.includes("B")) safeType = "Factura B";
-                        // ...otros casos según se necesiten
+                        // Normalizar el tipo devuelto por la IA al formato esperado
+                        const upper = safeType.toUpperCase();
+                        if (upper.includes("NOTA DE CREDITO") || upper.includes("NOTA DE CRÉDITO") || upper.includes("NC")) {
+                            if (upper.includes("B")) safeType = "Nota de Credito - Factura B";
+                            else safeType = "Nota de Credito - Factura A";
+                        } else if (upper.includes("MIPYME")) {
+                            safeType = "MiPyme";
+                        } else if (upper.includes("B") && upper.includes("EXENTA")) {
+                            safeType = "Factura B - Exenta IVA";
+                        } else if (upper.includes("B")) {
+                            safeType = "Factura B";
+                        } else {
+                            // Default: Factura A (el tipo más común)
+                            safeType = "Factura A";
+                        }
                     }
 
                     return {
