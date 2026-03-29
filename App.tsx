@@ -7,6 +7,7 @@ import { Invoices } from './pages/Invoices';
 import { Inventory } from './pages/Inventory';
 import { Appointments } from './pages/Appointments';
 import { Accounts } from './pages/Accounts';
+import { StockReports } from './pages/StockReports';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { AppDataProvider, useAppData } from './lib/AppDataContext';
 import { ROUTES } from './lib/routes';
@@ -64,11 +65,11 @@ function AuthenticatedApp() {
             <Route index element={<Navigate to={ROUTES.dashboard} replace />} />
             <Route path={ROUTES.dashboard} element={<Dashboard />} />
             <Route path={ROUTES.invoices} element={<Invoices />} />
-            <Route path={ROUTES.inventory} element={<ModuleDisabled />} />
+            <Route path={ROUTES.inventory} element={<Inventory />} />
             <Route path={ROUTES.appointments} element={<Appointments />} />
             <Route path={ROUTES.accounts} element={<Accounts />} />
             <Route path={ROUTES.reports} element={<ModuleDisabled />} />
-            <Route path={ROUTES.stockReports} element={<ModuleDisabled />} />
+            <Route path={ROUTES.stockReports} element={<StockReports />} />
             <Route path={ROUTES.settings} element={<ModuleDisabled />} />
             <Route path="*" element={<Navigate to={ROUTES.dashboard} replace />} />
           </Route>

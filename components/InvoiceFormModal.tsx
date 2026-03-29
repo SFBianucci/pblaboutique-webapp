@@ -321,18 +321,21 @@ export const InvoiceFormModal: React.FC<InvoiceFormModalProps> = ({
                 }
 
                 if (!matchedInsurance && extractedName) {
-                    const foundByName = INSURANCE_LIST.find(i => {
+                    // Match exacto: el nombre extraído contiene el value o label completo
+                    const foundExact = INSURANCE_LIST.find(i => {
                         if (i.value.length < 3) return false;
                         return extractedName.includes(i.value) || extractedName.includes(i.label);
                     });
-                    if (foundByName) matchedInsurance = foundByName.value;
-                }
-
-                if (!matchedInsurance && data.insurance) {
-                    if (extractedName.includes("SEGUROS")) {
-                        matchedInsurance = "PARTICULAR"; 
+                    if (foundExact) {
+                        matchedInsurance = foundExact.value;
                     } else {
-                        matchedInsurance = "PARTICULAR";
+                        // Match parcial: dividir labels compuestos (ej "GALICIA/SURA") y buscar cada parte
+                        const foundPartial = INSURANCE_LIST.find(i => {
+                            if (i.value.length < 3) return false;
+                            const keywords = i.label.toUpperCase().split(/[\s\/]+/).filter(w => w.length >= 4 && w !== "SEGUROS");
+                            return keywords.some(kw => extractedName.includes(kw));
+                        });
+                        if (foundPartial) matchedInsurance = foundPartial.value;
                     }
                 }
 

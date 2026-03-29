@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dialog } from './ui/Dialog';
 import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
-import { CheckCircle, Printer, Download, Undo2, Trash2, FileText, Eye, X, AlertTriangle } from 'lucide-react';
+import { CheckCircle, Printer, Download, Undo2, Trash2, FileText, Eye, X } from 'lucide-react';
 import { Invoice } from '../types';
 import { formatCurrency } from '../lib/utils';
 import { useAuth } from '../lib/AuthContext';
@@ -17,7 +17,44 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoice,
     if (!invoice) return null;
     const [isPreviewOpen, setIsPreviewOpen] = useState(false);
     const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+    const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
+    const [isLoadingPreview, setIsLoadingPreview] = useState(false);
     const { token } = useAuth();
+
+    // Cuando se abre el preview, descargar el PDF via API autenticada y crear blob URL
+    useEffect(() => {
+        if (!isPreviewOpen || !isPdfDocument || previewBlobUrl) return;
+
+        let cancelled = false;
+        const fetchPreview = async () => {
+            setIsLoadingPreview(true);
+            try {
+                const response = await fetch(`/api/invoices?id=${encodeURIComponent(invoice.id)}&download=1`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                if (!response.ok) throw new Error('Failed to fetch PDF');
+                const blob = await response.blob();
+                if (!cancelled) {
+                    setPreviewBlobUrl(URL.createObjectURL(blob));
+                }
+            } catch (err) {
+                console.error('PDF preview fetch error:', err);
+            } finally {
+                if (!cancelled) setIsLoadingPreview(false);
+            }
+        };
+        fetchPreview();
+
+        return () => { cancelled = true; };
+    }, [isPreviewOpen]);
+
+    // Limpiar blob URL al cerrar el modal
+    useEffect(() => {
+        if (!isPreviewOpen && previewBlobUrl) {
+            URL.revokeObjectURL(previewBlobUrl);
+            setPreviewBlobUrl(null);
+        }
+    }, [isPreviewOpen]);
 
     const hasLinkedDocument = Boolean(invoice.fileDataUrl);
     const isPdfDocument = Boolean(
@@ -264,22 +301,18 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({ invoice,
                         </div>
                         <div className="flex-1 bg-gray-100 relative">
                             {isPdfDocument ? (
-                                <object
-                                    data={invoice.fileDataUrl}
-                                    type="application/pdf"
-                                    className="w-full h-full block"
-                                >
+                                isLoadingPreview || !previewBlobUrl ? (
                                     <div className="flex flex-col items-center justify-center h-full text-gray-500 p-8 text-center">
-                                        <AlertTriangle className="w-12 h-12 text-gray-300 mb-4" />
-                                        <p className="font-medium">No se pudo visualizar el documento directamente.</p>
-                                        <button
-                                            className="mt-4 inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
-                                            onClick={openLinkedDocument}
-                                        >
-                                            Abrir en nueva pestaña
-                                        </button>
+                                        <div className="w-8 h-8 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin mb-4" />
+                                        <p className="font-medium text-sm">Cargando documento...</p>
                                     </div>
-                                </object>
+                                ) : (
+                                    <iframe
+                                        src={previewBlobUrl}
+                                        className="w-full h-full block border-0"
+                                        title="Vista previa del documento"
+                                    />
+                                )
                             ) : (
                                 <div className="w-full h-full flex items-center justify-center p-4">
                                     <img

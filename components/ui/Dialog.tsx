@@ -8,17 +8,18 @@ interface DialogProps {
   children?: React.ReactNode;
   className?: string;
   title?: string;
+  preventBackdropClose?: boolean;
 }
 
-export const Dialog = ({ open, onOpenChange, children, className, title }: DialogProps) => {
+export const Dialog = ({ open, onOpenChange, children, className, title, preventBackdropClose }: DialogProps) => {
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
       {/* Backdrop: Más oscuro y con blur para foco total */}
       <div 
-        className="fixed inset-0 bg-gray-950/70 backdrop-blur-sm transition-opacity animate-in fade-in duration-200" 
-        onClick={() => onOpenChange(false)}
+        className="fixed inset-0 bg-gray-950/70 backdrop-blur-sm transition-opacity animate-in fade-in duration-200"
+        onClick={() => !preventBackdropClose && onOpenChange(false)}
       />
       
       {/* Content: Fondo blanco sólido garantizado, sombra profunda */}

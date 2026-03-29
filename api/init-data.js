@@ -92,7 +92,7 @@ export default async function handler(req, res) {
             })
             .sort((a, b) => parseInt(b.id) - parseInt(a.id));
 
-        const tipoStock = allTipoStock.filter(i => isActive(i, "ATS"));
+        const tipoStock = allTipoStock.filter(i => isActive(i, "TS"));
 
         // Today's appointments (dd/mm/yyyy)
         const todayStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
